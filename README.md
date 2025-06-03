@@ -1,9 +1,13 @@
+---
 title: PortfolioAI
 emoji: 🦀
 colorFrom: green
 colorTo: purple
 sdk: docker
 pinned: false
+---
+
+Check out the configuration reference at https://huggingface.co/docs/hub/spaces-config-reference
 
 # **PortfolioAI — Instant Personal Brand & Job-Readiness Suite**
 (Python + React + Vite + MaterialUI + FastAPI + Supabase + Groq LLM)
@@ -95,6 +99,63 @@ npm run dev
 
 ## Customization
 - To change the color theme, edit `src/theme.js`.
+
+## 🚀 Deployment
+
+### Local Development with Docker
+
+1. Create a `.env` file from `.env.example`:
+```bash
+cp .env.example .env
+```
+
+2. Fill in your environment variables in `.env`:
+```
+SUPABASE_URL=your_supabase_project_url
+SUPABASE_KEY=your_supabase_anon_key
+GROQ_API_KEY=your_groq_api_key
+```
+
+3. Build and run with Docker Compose:
+```bash
+docker-compose up --build
+```
+
+The app will be available at `http://localhost:8000`.
+
+### Hugging Face Spaces Deployment
+
+1. Fork this repository to your Hugging Face account
+2. Create a new Space on Hugging Face:
+   - Choose "Docker" as the SDK
+   - Select your forked repository
+   - Add the following secrets in Space settings:
+     - `SUPABASE_URL`
+     - `SUPABASE_KEY`
+     - `GROQ_API_KEY`
+
+3. The Space will automatically build and deploy using the Dockerfile
+
+Your app will be available at `https://your-username-portfolioai.hf.space`
+
+### Environment Variables
+
+- `SUPABASE_URL`: Your Supabase project URL
+- `SUPABASE_KEY`: Your Supabase anonymous key
+- `GROQ_API_KEY`: Your Groq LLM API key
+- `PORT`: (Optional) Port to run the server on (default: 8000)
+
+### Docker Commands
+
+Build the image:
+```bash
+docker build -t portfolioai .
+```
+
+Run the container:
+```bash
+docker run -p 8000:8000 --env-file .env portfolioai
+```
 
 ---
 

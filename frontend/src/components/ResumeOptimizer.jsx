@@ -16,7 +16,7 @@ import {
   Alert,
   CircularProgress
 } from '@mui/material';
-import axios from 'axios';
+import axios from '../utils/axios';
 import ReactMarkdown from 'react-markdown';
 
 function ResumeOptimizer({ userId }) {

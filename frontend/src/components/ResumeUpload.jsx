@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Box, Card, CardContent, Typography, Button, LinearProgress, Snackbar, Alert, TextField, Stack } from '@mui/material';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import ClearIcon from '@mui/icons-material/Clear';
-import axios from 'axios';
+import axios from '../utils/axios';
 
 // ResumeUpload component allows users to upload a resume
 function ResumeUpload({ onResumeUploaded, userId }) {

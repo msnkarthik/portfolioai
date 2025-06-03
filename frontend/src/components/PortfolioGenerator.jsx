@@ -20,7 +20,7 @@ import {
 } from '@mui/material';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import DownloadIcon from '@mui/icons-material/Download';
-import axios from 'axios';
+import axios from '../utils/axios';
 
 function PortfolioGenerator({ userId }) {
   const [portfolios, setPortfolios] = useState([]);

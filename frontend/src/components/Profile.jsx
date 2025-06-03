@@ -19,7 +19,7 @@ import {
 import ResumeUpload from './ResumeUpload';
 import ChatPortfolio from './ChatPortfolio';
 import StatusHeader from './StatusHeader';
-import axios from 'axios';
+import axios from '../utils/axios';
 import { useNavigate } from 'react-router-dom';
 import ClearIcon from '@mui/icons-material/Clear';
 

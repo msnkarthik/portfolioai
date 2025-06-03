@@ -14,11 +14,15 @@ from enum import Enum
 from dotenv import load_dotenv
 import json
 import re
+from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
+import time
 
 # FastAPI and Pydantic
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Query, Body
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Query, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 # Database
@@ -32,11 +36,11 @@ import PyPDF2
 import docx
 from io import BytesIO
 
+# Import secrets manager
+from secrets_manager import get_supabase_url, get_supabase_key, get_groq_api_key
+
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Load environment variables from .env if present
@@ -45,27 +49,66 @@ load_dotenv()
 # Initialize FastAPI app
 app = FastAPI(title="PortfolioAI API")
 
-# Add CORS middleware
+# Add request logging middleware
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    # Log request
+    logger.info(f"Request: {request.method} {request.url.path}")
+    logger.info(f"Headers: {dict(request.headers)}")
+    
+    # Get request body if it exists
+    try:
+        body = await request.body()
+        if body:
+            logger.info(f"Request body: {body.decode()}")
+    except:
+        pass
+    
+    # Time the request
+    start_time = time.time()
+    
+    # Process request
+    response = await call_next(request)
+    
+    # Log response
+    process_time = time.time() - start_time
+    logger.info(f"Response: {response.status_code} (took {process_time:.2f}s)")
+    
+    return response
+
+# Add CORS middleware with specific origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific origins
+    allow_origins=[
+        "http://localhost:5173",  # Local development
+        "http://localhost:8000",  # Local production
+        "https://adwhytahumans-portfolioai.hf.space",  # Hugging Face Space
+        "https://*.hf.space"  # Any Hugging Face Space
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Initialize services based on environment
-if not all([os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"), os.getenv("GROQ_API_KEY")]):
-    logger.error("Missing required environment variables for Supabase or Groq LLM.")
-    raise ValueError("Missing required environment variables for Supabase or Groq LLM.")
+# Mount static files for frontend
+frontend_path = Path(__file__).parent / "frontend" / "dist"
+if frontend_path.exists():
+    app.mount("/", StaticFiles(directory=str(frontend_path), html=True), name="frontend")
 else:
-    logger.info("Using real Supabase and Groq LLM clients.")
-    supabase_url = os.getenv("SUPABASE_URL")
-    supabase_key = os.getenv("SUPABASE_KEY")
-    groq_api_key = os.getenv("GROQ_API_KEY")
+    logger.warning(f"Frontend static files not found at {frontend_path}")
+
+# Initialize services using secrets manager
+try:
+    supabase_url = get_supabase_url()
+    supabase_key = get_supabase_key()
+    groq_api_key = get_groq_api_key()
     
+    logger.info("Successfully loaded all required secrets")
     supabase = create_client(supabase_url, supabase_key)
     groq_client = groq.Groq(api_key=groq_api_key)
+except ValueError as e:
+    logger.error(f"Failed to initialize services: {str(e)}")
+    raise
 
 # Enums
 class PortfolioMethod(str, Enum):
@@ -961,14 +1004,14 @@ async def export_portfolio(portfolio_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/resumes/{user_id}", response_model=List[OptimizedResume])
-async def list_optimized_resumes(user_id: str):
-    """List all optimized resumes for a user"""
+async def get_resumes(user_id: str):
+    logger.info(f"Fetching resumes for user: {user_id}")
     try:
         result = supabase.table("optimized_resumes").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
         return result.data
     except Exception as e:
-        logger.error(f"Error listing optimized resumes: {str(e)}")
-        raise HTTPException(status_code=500, detail="Error listing optimized resumes")
+        logger.error(f"Error fetching resumes: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error fetching resumes")
 
 # Job Description Endpoints
 @app.post("/api/job-descriptions", response_model=JobDescription)
@@ -989,14 +1032,14 @@ async def create_job_description(request: JobDescriptionCreate):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/job-descriptions/{user_id}", response_model=List[JobDescription])
-async def list_job_descriptions(user_id: str):
-    """List all job descriptions for a user"""
+async def get_job_descriptions(user_id: str):
+    logger.info(f"Fetching job descriptions for user: {user_id}")
     try:
         result = supabase.table("job_descriptions").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
         return result.data
     except Exception as e:
-        logger.error(f"Error listing job descriptions: {str(e)}")
-        raise HTTPException(status_code=500, detail="Error listing job descriptions")
+        logger.error(f"Error fetching job descriptions: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error fetching job descriptions")
 
 # Resume Optimization Endpoints
 @app.post("/api/resumes/optimize", response_model=OptimizedResume)
@@ -1057,16 +1100,6 @@ async def optimize_resume(request: ResumeOptimizeRequest, background_tasks: Back
         logger.error(f"Error optimizing resume: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/resumes/{user_id}", response_model=List[OptimizedResume])
-async def list_optimized_resumes(user_id: str):
-    """List all optimized resumes for a user"""
-    try:
-        result = supabase.table("optimized_resumes").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
-        return result.data
-    except Exception as e:
-        logger.error(f"Error listing optimized resumes: {str(e)}")
-        raise HTTPException(status_code=500, detail="Error listing optimized resumes")
-
 # Cover Letter Endpoints
 @app.post("/api/cover-letters/generate", response_model=CoverLetter)
 async def generate_cover_letter(request: CoverLetterGenerateRequest):
@@ -1108,14 +1141,14 @@ async def generate_cover_letter(request: CoverLetterGenerateRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/cover-letters/{user_id}", response_model=List[CoverLetter])
-async def list_cover_letters(user_id: str):
-    """List all cover letters for a user"""
+async def get_cover_letters(user_id: str):
+    logger.info(f"Fetching cover letters for user: {user_id}")
     try:
         result = supabase.table("cover_letters").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
         return result.data
     except Exception as e:
-        logger.error(f"Error listing cover letters: {str(e)}")
-        raise HTTPException(status_code=500, detail="Error listing cover letters")
+        logger.error(f"Error fetching cover letters: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error fetching cover letters")
 
 # Interview Endpoints
 @app.post("/api/interviews/start", response_model=InterviewSession)
@@ -1462,6 +1495,15 @@ async def get_interview_feedback(request: InterviewFeedbackRequest):
         logger.error(f"Error generating interview feedback: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# Move the catch-all route here, just before the main block
+@app.get("/{full_path:path}")
+async def serve_spa(full_path: str):
+    """Serve the frontend SPA for all other routes"""
+    if frontend_path.exists():
+        return FileResponse(frontend_path / "index.html")
+    raise HTTPException(status_code=404, detail="Frontend not found")
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000) 
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port) 
