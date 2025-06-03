@@ -14,10 +14,12 @@ import {
   Button,
   Snackbar,
   Alert,
-  CircularProgress
+  CircularProgress,
+  Stack
 } from '@mui/material';
 import axios from '../utils/axios';
 import ReactMarkdown from 'react-markdown';
+import RefreshIcon from '@mui/icons-material/Refresh';
 
 function CareerGuide({ userId }) {
   const [careerGuides, setCareerGuides] = useState([]);
@@ -25,6 +27,7 @@ function CareerGuide({ userId }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const [regenerating, setRegenerating] = useState({});
 
   // Fetch career guides on component mount
   useEffect(() => {
@@ -58,6 +61,40 @@ function CareerGuide({ userId }) {
     setSelectedGuide(guide);
   };
 
+  const handleRegenerateGuide = async (guide) => {
+    try {
+      // Set regenerating state for this specific guide
+      setRegenerating(prev => ({ ...prev, [guide.id]: true }));
+      
+      // Call the generate endpoint with the same parameters
+      const response = await axios.post('/api/career-guides/generate', {
+        user_id: userId,
+        job_description_id: guide.job_description_id,
+        resume_id: guide.resume_id
+      });
+
+      // Show success message
+      setSnackbar({
+        open: true,
+        message: 'Career guide regeneration started. Please wait...',
+        severity: 'success'
+      });
+
+      // Refresh the career guides list after a short delay
+      setTimeout(fetchCareerGuides, 2000);
+    } catch (error) {
+      console.error('Error regenerating career guide:', error);
+      setSnackbar({
+        open: true,
+        message: 'Error regenerating career guide. Please try again.',
+        severity: 'error'
+      });
+    } finally {
+      // Clear regenerating state for this guide
+      setRegenerating(prev => ({ ...prev, [guide.id]: false }));
+    }
+  };
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
@@ -75,14 +112,27 @@ function CareerGuide({ userId }) {
             Latest Career Guide
           </Typography>
           {selectedGuide ? (
-            <Box sx={{ 
-              p: 2, 
-              bgcolor: 'background.paper', 
-              borderRadius: 1,
-              maxHeight: '500px',
-              overflow: 'auto'
-            }}>
-              <ReactMarkdown>{selectedGuide.content}</ReactMarkdown>
+            <Box>
+              <Box sx={{ 
+                p: 2, 
+                bgcolor: 'background.paper', 
+                borderRadius: 1,
+                maxHeight: '500px',
+                overflow: 'auto',
+                mb: 2
+              }}>
+                <ReactMarkdown>{selectedGuide.content}</ReactMarkdown>
+              </Box>
+              <Button
+                variant="outlined"
+                color="primary"
+                onClick={() => handleRegenerateGuide(selectedGuide)}
+                disabled={regenerating[selectedGuide.id]}
+                startIcon={regenerating[selectedGuide.id] ? <CircularProgress size={20} /> : <RefreshIcon />}
+                sx={{ mt: 2 }}
+              >
+                {regenerating[selectedGuide.id] ? 'Regenerating...' : 'Regenerate Career Guide'}
+              </Button>
             </Box>
           ) : (
             <Typography color="text.secondary">
@@ -117,13 +167,24 @@ function CareerGuide({ userId }) {
                       {guide.job_description_id ? 'Linked' : 'Not Linked'}
                     </TableCell>
                     <TableCell>
-                      <Button
-                        variant="outlined"
-                        size="small"
-                        onClick={() => handleViewGuide(guide)}
-                      >
-                        View
-                      </Button>
+                      <Stack direction="row" spacing={1}>
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          onClick={() => handleViewGuide(guide)}
+                        >
+                          View
+                        </Button>
+                        <Button
+                          variant="contained"
+                          size="small"
+                          onClick={() => handleRegenerateGuide(guide)}
+                          disabled={regenerating[guide.id]}
+                          startIcon={regenerating[guide.id] ? <CircularProgress size={16} /> : <RefreshIcon />}
+                        >
+                          {regenerating[guide.id] ? 'Regenerating...' : 'Regenerate'}
+                        </Button>
+                      </Stack>
                     </TableCell>
                   </TableRow>
                 ))}

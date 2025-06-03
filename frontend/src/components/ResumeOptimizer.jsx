@@ -14,7 +14,8 @@ import {
   Button,
   Snackbar,
   Alert,
-  CircularProgress
+  CircularProgress,
+  Stack
 } from '@mui/material';
 import axios from '../utils/axios';
 import ReactMarkdown from 'react-markdown';
@@ -25,6 +26,7 @@ function ResumeOptimizer({ userId }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const [regenerating, setRegenerating] = useState({});
 
   // Fetch resumes on component mount
   useEffect(() => {
@@ -56,6 +58,40 @@ function ResumeOptimizer({ userId }) {
 
   const handleViewResume = (resume) => {
     setSelectedResume(resume);
+  };
+
+  const handleRegenerateResume = async (resume) => {
+    try {
+      // Set regenerating state for this specific resume
+      setRegenerating(prev => ({ ...prev, [resume.id]: true }));
+      
+      // Call the optimize endpoint with the same parameters
+      const response = await axios.post('/api/resumes/optimize', {
+        user_id: userId,
+        job_description_id: resume.job_description_id,
+        resume_id: resume.original_resume_id
+      });
+
+      // Show success message
+      setSnackbar({
+        open: true,
+        message: 'Resume regeneration started. Please wait...',
+        severity: 'success'
+      });
+
+      // Refresh the resumes list after a short delay
+      setTimeout(fetchResumes, 2000);
+    } catch (error) {
+      console.error('Error regenerating resume:', error);
+      setSnackbar({
+        open: true,
+        message: 'Error regenerating resume. Please try again.',
+        severity: 'error'
+      });
+    } finally {
+      // Clear regenerating state for this resume
+      setRegenerating(prev => ({ ...prev, [resume.id]: false }));
+    }
   };
 
   if (loading) {
@@ -121,13 +157,24 @@ function ResumeOptimizer({ userId }) {
                       {resume.status || 'Completed'}
                     </TableCell>
                     <TableCell>
-                      <Button
-                        variant="outlined"
-                        size="small"
-                        onClick={() => handleViewResume(resume)}
-                      >
-                        View
-                      </Button>
+                      <Stack direction="row" spacing={1}>
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          onClick={() => handleViewResume(resume)}
+                        >
+                          View
+                        </Button>
+                        <Button
+                          variant="contained"
+                          size="small"
+                          onClick={() => handleRegenerateResume(resume)}
+                          disabled={regenerating[resume.id]}
+                          startIcon={regenerating[resume.id] ? <CircularProgress size={16} /> : null}
+                        >
+                          {regenerating[resume.id] ? 'Regenerating...' : 'Regenerate'}
+                        </Button>
+                      </Stack>
                     </TableCell>
                   </TableRow>
                 ))}

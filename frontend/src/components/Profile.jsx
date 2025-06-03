@@ -216,15 +216,31 @@ function Profile({ userId, onStatusUpdate }) {
   // Handle chat completion with persistence
   const handleChatComplete = async (data) => {
     try {
-      const response = await axios.post('/api/resumes/chat', {
+      // First start a new chat session
+      const startResponse = await axios.post('/api/chat/start', {
         user_id: userId,
-        content: data.content,
         title: data.title || 'Chat Profile'
       });
 
+      if (!startResponse.data?.chat_session_id) {
+        throw new Error('Failed to create chat session');
+      }
+
+      const chatSessionId = startResponse.data.chat_session_id;
+
+      // Then send the structured data as a message
+      const messageResponse = await axios.post('/api/chat/message', {
+        chat_session_id: chatSessionId,
+        content: JSON.stringify(data)
+      });
+
+      if (!messageResponse.data?.status === 'completed') {
+        throw new Error('Failed to save chat data');
+      }
+
       const updatedData = {
         ...data,
-        resumeId: response.data.id,
+        chatSessionId: chatSessionId,
         updatedAt: new Date().toISOString()
       };
       
@@ -369,12 +385,15 @@ function Profile({ userId, onStatusUpdate }) {
       return;
     }
 
-    // Get the correct resume ID (either from upload or chat)
-    const resumeId = resumeData?.resumeId || chatData?.resumeId;
-    if (!resumeId) {
+    // Get the correct ID (either resume ID or chat session ID)
+    const resumeId = resumeData?.resumeId;
+    const chatSessionId = chatData?.chatSessionId;
+    const id = resumeId || chatSessionId;
+
+    if (!id) {
       setSnackbar({ 
         open: true, 
-        message: 'Resume information is required. Please upload a resume or complete the chat.', 
+        message: 'Profile information is required. Please upload a resume or complete the chat.', 
         severity: 'error' 
       });
       return;
@@ -388,8 +407,15 @@ function Profile({ userId, onStatusUpdate }) {
       let requestData = {
         user_id: userId,
         job_description_id: jobDescriptionId,
-        resume_id: resumeId
+        title: 'My Portfolio'  // Default title
       };
+
+      // Add the appropriate ID based on the source
+      if (resumeId) {
+        requestData.resume_id = resumeId;
+      } else if (chatSessionId) {
+        requestData.chat_session_id = chatSessionId;
+      }
 
       let endpoint = '';
       let successMessage = '';
@@ -399,6 +425,9 @@ function Profile({ userId, onStatusUpdate }) {
 
       switch (action) {
         case 'optimize':
+          if (!resumeId) {
+            throw new Error('Resume optimization requires a resume upload');
+          }
           endpoint = '/api/resumes/optimize';
           successMessage = 'Resume optimization started.';
           errorMessage = 'Error starting resume optimization.';
@@ -407,19 +436,15 @@ function Profile({ userId, onStatusUpdate }) {
 
         case 'portfolio':
           endpoint = '/api/portfolios/generate';
-          requestData = {
-            user_id: userId,
-            title: 'My Portfolio',
-            resume_id: resumeData?.resumeId,
-            job_description_id: jobDescriptionId,
-            chat_data: chatData
-          };
           successMessage = 'Portfolio generation started.';
           errorMessage = 'Error starting portfolio generation.';
           redirectPath = '/portfolio-generator';
           break;
 
         case 'cover-letter':
+          if (!resumeId) {
+            throw new Error('Cover letter generation requires a resume upload');
+          }
           endpoint = '/api/cover-letters/generate';
           successMessage = 'Cover letter generation started.';
           errorMessage = 'Error starting cover letter generation.';
@@ -449,6 +474,9 @@ function Profile({ userId, onStatusUpdate }) {
           break;
 
         case 'career-guide':
+          if (!resumeId) {
+            throw new Error('Career guide generation requires a resume upload');
+          }
           endpoint = '/api/career-guides/generate';
           successMessage = 'Career guide generation started.';
           errorMessage = 'Error starting career guide generation.';
@@ -462,29 +490,30 @@ function Profile({ userId, onStatusUpdate }) {
       // Log the request
       console.log(`Starting ${action} with data:`, requestData);
       
-      const response = await axios.post(endpoint, requestData);
-      responseData = response.data;
-      
-      // Log successful response
-      console.log(`${action} response:`, responseData);
-      
-      // Show success message
-      setSnackbar({ 
-        open: true, 
-        message: successMessage, 
-        severity: 'success' 
-      });
+      if (endpoint) {
+        const response = await axios.post(endpoint, requestData);
+        responseData = response.data;
+        
+        // Log successful response
+        console.log(`${action} response:`, responseData);
+        
+        // Show success message
+        setSnackbar({ 
+          open: true, 
+          message: successMessage, 
+          severity: 'success' 
+        });
 
-      // Handle redirect based on action and response
-      if (redirectPath) {
-        // For other actions, use the standard redirect
-        navigate(redirectPath);
+        // Handle redirect based on action and response
+        if (redirectPath) {
+          navigate(redirectPath);
+        }
       }
     } catch (error) {
       console.error(`Error in ${action}:`, error);
       setSnackbar({ 
         open: true, 
-        message: error.response?.data?.detail || errorMessage, 
+        message: error.response?.data?.detail || error.message || errorMessage, 
         severity: 'error' 
       });
     } finally {

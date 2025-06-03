@@ -134,7 +134,8 @@ class Portfolio(PortfolioBase):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     user_id: str
     job_description_id: Optional[str] = None
-    resume_id: str
+    resume_id: Optional[str] = None
+    chat_session_id: Optional[str] = None
     method: PortfolioMethod
     status: PortfolioStatus
     content: Optional[Dict] = None
@@ -210,11 +211,19 @@ class InterviewScore(BaseModel):
 
 class ChatSession(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    portfolio_id: str
+    user_id: str
+    title: str
     current_question: str
     status: PortfolioStatus
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class ChatMessage(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    chat_session_id: str
+    content: str
+    role: str  # 'user' or 'assistant'
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 # Request/Response Models
 class JobDescriptionCreate(BaseModel):
@@ -248,8 +257,9 @@ class InterviewAnswerRequest(BaseModel):
 
 class PortfolioGenerateRequest(BaseModel):
     user_id: str
-    job_description_id: str
-    resume_id: str
+    job_description_id: Optional[str] = None
+    resume_id: Optional[str] = None
+    chat_session_id: Optional[str] = None
     title: str
 
 class ChatAnswerRequest(BaseModel):
@@ -264,6 +274,10 @@ class InterviewFeedbackRequest(BaseModel):
     interview_id: str
     questions: List[InterviewQuestion]
     score: int
+
+class ChatMessageRequest(BaseModel):
+    chat_session_id: str
+    content: str
 
 # In-memory chat session store (for development/demo)
 chat_sessions_store = {}
@@ -491,6 +505,7 @@ class LLMService:
                 "Optimize the following resume to better match the job requirements. "
                 "Keep all factual information but enhance the descriptions to better highlight relevant skills and experiences. "
                 "Focus on matching the key requirements while maintaining truthfulness. "
+                "Do NOT include any introductory or instructional text. "
                 "Return the optimized resume in the same format as the input.\n\n"
                 f"Job Requirements:\n{json.dumps(job_analysis, indent=2)}\n\n"
                 f"Original Resume:\n{resume}"
@@ -508,7 +523,9 @@ class LLMService:
                 "Write a professional cover letter based on the following job description and resume. "
                 "The cover letter should be personalized, highlight relevant experience, "
                 "and demonstrate enthusiasm for the role. "
-                "Keep it concise (max 3 paragraphs) and professional.\n\n"
+                "Keep it concise (max 3 paragraphs) and professional. "
+                "Do NOT include any introductory or instructional text. "
+                "Return only the cover letter content.\n\n"
                 f"Job Description:\n{job_description}\n\n"
                 f"Resume:\n{optimized_resume}"
             )
@@ -525,7 +542,9 @@ class LLMService:
                 "Analyze the following job description and resume to provide career guidance. "
                 "Include: 1) Skills gap analysis, 2) Recommended learning paths, "
                 "3) Short-term and long-term career goals, 4) Action items for improvement. "
-                "Format the response in clear sections with bullet points where appropriate.\n\n"
+                "Format the response in clear sections with bullet points where appropriate. "
+                "Do NOT include any introductory or instructional text. "
+                "Return only the career guidance content.\n\n"
                 f"Job Description:\n{job_description}\n\n"
                 f"Resume:\n{optimized_resume}"
             )
@@ -670,6 +689,57 @@ class LLMService:
             logger.error(f"Error generating interview feedback: {str(e)}")
             raise HTTPException(status_code=500, detail="Error generating interview feedback")
 
+    def enhance_portfolio_with_jd(self, structured_data: dict, job_description: dict) -> dict:
+        """Enhance portfolio content based on job description"""
+        try:
+            # Extract relevant information from job description
+            jd_content = job_description.get("content", "")
+            jd_title = job_description.get("title", "")
+            
+            # Create a prompt to enhance the portfolio
+            prompt = f"""Given the following job description and current portfolio content, enhance the portfolio to better match the job requirements:
+
+Job Title: {jd_title}
+Job Description: {jd_content}
+
+Current Portfolio Content:
+{json.dumps(structured_data, indent=2)}
+
+Please enhance the portfolio content to better align with the job requirements. Focus on:
+1. Highlighting relevant skills and experiences
+2. Adjusting the tone and focus of the about me section
+3. Emphasizing projects and work experience that match the job requirements
+4. Adding or modifying skills to match the job requirements
+
+Return the enhanced portfolio content in the same structured format."""
+
+            # Get enhanced content from LLM
+            response = self.client.chat.completions.create(
+                model="mixtral-8x7b-32768",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7,
+                max_tokens=2000
+            )
+            
+            # Parse the response
+            enhanced_content = response.choices[0].message.content
+            try:
+                # Try to parse as JSON
+                enhanced_data = json.loads(enhanced_content)
+                # Merge with original data, keeping original structure
+                for key in structured_data:
+                    if key in enhanced_data:
+                        structured_data[key] = enhanced_data[key]
+                return structured_data
+            except json.JSONDecodeError:
+                # If not valid JSON, return original data
+                logger.warning("Failed to parse enhanced portfolio content as JSON")
+                return structured_data
+                
+        except Exception as e:
+            logger.error(f"Error enhancing portfolio with job description: {str(e)}")
+            return structured_data  # Return original data on error
+
 class FileProcessingService:
     """Handles file upload and processing"""
     
@@ -727,6 +797,23 @@ class FileProcessingService:
 # Initialize services
 llm_service = LLMService()
 file_service = FileProcessingService()
+
+# Database migration function
+async def migrate_database():
+    """Run database migrations"""
+    try:
+        # Add chat_session_id column to portfolios table if it doesn't exist
+        result = supabase.rpc('add_chat_session_id_column').execute()
+        logger.info("Database migration completed successfully")
+    except Exception as e:
+        logger.error(f"Error running database migration: {str(e)}")
+        # Don't raise the error as this is a background task
+
+# Run migration on startup
+@app.on_event("startup")
+async def startup_event():
+    """Run startup tasks"""
+    await migrate_database()
 
 # API Routes
 @app.post("/api/portfolios/resume", response_model=Dict[str, str])
@@ -825,33 +912,30 @@ async def create_portfolio_from_resume(
         logger.error(f"Error creating portfolio: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/portfolios/chat/start", response_model=Dict[str, str])
-async def start_chat_portfolio(request: ChatStartRequest):
+@app.post("/api/chat/start", response_model=Dict[str, str])
+async def start_chat(request: ChatStartRequest):
     """
-    Start a chat-based portfolio creation session (now accepts JSON body)
+    Start a new chat session
     """
     try:
-        # Create portfolio record
-        portfolio = Portfolio(
-            user_id=request.user_id,
-            title=request.title,
-            method=PortfolioMethod.CHAT,
-            status=PortfolioStatus.IN_PROGRESS
-        )
         # Create chat session
         first_question = "What is your full name?"
         chat_session = ChatSession(
-            portfolio_id=portfolio.id,
+            user_id=request.user_id,
+            title=request.title,
             current_question=first_question,
             status=PortfolioStatus.IN_PROGRESS
         )
-        # Save to database (mocked)
-        portfolio_data = portfolio.model_dump(mode="json")
+        
+        # Save to database
         chat_data = chat_session.model_dump(mode="json")
-        supabase.table("portfolios").insert(portfolio_data).execute()
-        supabase.table("chat_sessions").insert(chat_data).execute()
+        result = supabase.table("chat_sessions").insert(chat_data).execute()
+        
+        if not result.data:
+            raise HTTPException(status_code=500, detail="Failed to create chat session")
+            
         # Store in-memory session state
-        chat_sessions_store[portfolio.id] = {
+        chat_sessions_store[chat_session.id] = {
             "questions": [
                 "What is your full name?",
                 "What is your most recent job title?",
@@ -863,44 +947,94 @@ async def start_chat_portfolio(request: ChatStartRequest):
             "answers": [],
             "current": 0
         }
-        logger.info(f"Started chat session for portfolio {portfolio.id}")
+        
+        # Save initial welcome message
+        welcome_message = ChatMessage(
+            chat_session_id=chat_session.id,
+            content=first_question,
+            role="assistant"
+        )
+        message_data = welcome_message.model_dump(mode="json")
+        supabase.table("chat_messages").insert(message_data).execute()
+        
+        logger.info(f"Started chat session {chat_session.id} for user {request.user_id}")
         return {
+            "chat_session_id": chat_session.id,
             "next_question": first_question,
-            "status": "in_progress",
-            "portfolio_id": portfolio.id
+            "status": "in_progress"
         }
     except Exception as e:
         logger.error(f"Error starting chat session: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/portfolios/chat/answer", response_model=Dict[str, str])
-async def chat_answer(request: ChatAnswerRequest):
+@app.post("/api/chat/message", response_model=Dict[str, str])
+async def send_chat_message(request: ChatMessageRequest):
     """
-    Accepts an answer for the current chat question, returns next question or triggers LLM for portfolio generation.
+    Send a message in a chat session and get the next question or completion
     """
     try:
-        session = chat_sessions_store.get(request.portfolio_id)
+        # Get chat session
+        session_result = supabase.table("chat_sessions").select("*").eq("id", request.chat_session_id).single().execute()
+        if not session_result.data:
+            raise HTTPException(status_code=404, detail="Chat session not found")
+            
+        session = chat_sessions_store.get(request.chat_session_id)
         if not session:
             raise HTTPException(status_code=404, detail="Chat session not found")
-        session["answers"].append(request.answer)
+            
+        # Save user's message
+        user_message = ChatMessage(
+            chat_session_id=request.chat_session_id,
+            content=request.content,
+            role="user"
+        )
+        message_data = user_message.model_dump(mode="json")
+        supabase.table("chat_messages").insert(message_data).execute()
+        
+        # Process the answer
+        session["answers"].append(request.content)
         session["current"] += 1
+        
         if session["current"] < len(session["questions"]):
-            next_q = session["questions"][session["current"]]
-            logger.info(f"Next question for {request.portfolio_id}: {next_q}")
-            return {"next_question": next_q, "status": "in_progress"}
+            # Get next question
+            next_question = session["questions"][session["current"]]
+            
+            # Save assistant's message
+            assistant_message = ChatMessage(
+                chat_session_id=request.chat_session_id,
+                content=next_question,
+                role="assistant"
+            )
+            message_data = assistant_message.model_dump(mode="json")
+            supabase.table("chat_messages").insert(message_data).execute()
+            
+            # Update session status
+            supabase.table("chat_sessions").update({
+                "current_question": next_question,
+                "updated_at": datetime.utcnow().isoformat()
+            }).eq("id", request.chat_session_id).execute()
+            
+            return {
+                "chat_session_id": request.chat_session_id,
+                "next_question": next_question,
+                "status": "in_progress"
+            }
         else:
-            logger.info(f"All questions answered for {request.portfolio_id}, generating portfolio...")
-            # Parse chat answers into structured data matching resume workflow
+            # All questions answered, generate portfolio
+            logger.info(f"All questions answered for chat session {request.chat_session_id}")
+            
+            # Parse chat answers into structured data
             answers = session["answers"]
             structured = {
-                "Name": answers[0] if len(answers) > 0 else "",  # Use the name from first answer
+                "Name": answers[0] if len(answers) > 0 else "",
                 "About Me": answers[0] if len(answers) > 0 else "",
                 "Work Experience": [],
                 "Skills": [],
                 "Projects": [],
                 "Education": []
             }
-            # Parse Work Experience (assume answer 1 is a semicolon-separated list of jobs, each as Company|Designation|Duration)
+            
+            # Parse answers into structured data (same as before)
             if len(answers) > 1 and answers[1].strip():
                 work_exp = []
                 for item in answers[1].split(';'):
@@ -913,11 +1047,11 @@ async def chat_answer(request: ChatAnswerRequest):
                             "Description": parts[3] if len(parts) > 3 else ""
                         })
                 structured["Work Experience"] = work_exp
-            # Parse Skills (comma or newline separated)
+                
             if len(answers) > 2 and answers[2].strip():
                 skills = [s.strip() for s in re.split(r'[\n,]', answers[2]) if s.strip()]
                 structured["Skills"] = skills
-            # Parse Projects (semicolon-separated, each as Name|Description)
+                
             if len(answers) > 3 and answers[3].strip():
                 projects = []
                 for item in answers[3].split(';'):
@@ -928,12 +1062,11 @@ async def chat_answer(request: ChatAnswerRequest):
                             "Description": parts[1] if len(parts) > 1 else ""
                         })
                 structured["Projects"] = projects
-            # Parse Education (semicolon-separated, each as Degree|Institution|Board|Description)
+                
             if len(answers) > 4 and answers[4].strip():
                 education = []
                 for item in answers[4].split(';'):
                     parts = [p.strip() for p in item.split('|')]
-                    # Accept Degree|Institution|Board|Description, Degree|Institution|Board, Degree|Institution, or just Degree
                     if len(parts) >= 1:
                         education.append({
                             "Degree": parts[0],
@@ -942,22 +1075,41 @@ async def chat_answer(request: ChatAnswerRequest):
                             "Description": parts[3] if len(parts) > 3 else ""
                         })
                 structured["Education"] = education
-            portfolio_content = llm_service.generate_portfolio_content(structured)
-            supabase.table("portfolios").update({
+            
+            # Update session status to completed
+            supabase.table("chat_sessions").update({
                 "status": PortfolioStatus.COMPLETED,
-                "content": structured,
-                "html": portfolio_content["html"],
-                "css": portfolio_content["css"],
                 "updated_at": datetime.utcnow().isoformat()
-            }).eq("id", request.portfolio_id).execute()
-            logger.info(f"Portfolio {request.portfolio_id} completed.")
+            }).eq("id", request.chat_session_id).execute()
+            
             return {
-                "status": "completed", 
-                "portfolio_id": request.portfolio_id,
-                "message": "Thanks for your inputs. Saving your profile information."
+                "chat_session_id": request.chat_session_id,
+                "status": "completed",
+                "structured_data": structured,
+                "message": "Chat session completed. Profile information saved."
             }
     except Exception as e:
-        logger.error(f"Error in chat answer: {str(e)}")
+        logger.error(f"Error in chat message: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/chat/sessions/{user_id}", response_model=List[ChatSession])
+async def get_chat_sessions(user_id: str):
+    """Get all chat sessions for a user"""
+    try:
+        result = supabase.table("chat_sessions").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
+        return result.data
+    except Exception as e:
+        logger.error(f"Error fetching chat sessions: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/chat/messages/{chat_session_id}", response_model=List[ChatMessage])
+async def get_chat_messages(chat_session_id: str):
+    """Get all messages for a chat session"""
+    try:
+        result = supabase.table("chat_messages").select("*").eq("chat_session_id", chat_session_id).order("created_at", asc=True).execute()
+        return result.data
+    except Exception as e:
+        logger.error(f"Error fetching chat messages: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/portfolios/{portfolio_id}", response_model=Portfolio)
@@ -1415,22 +1567,44 @@ async def list_career_guides(user_id: str):
 
 @app.post("/api/portfolios/generate", response_model=Portfolio)
 async def generate_portfolio(request: PortfolioGenerateRequest, background_tasks: BackgroundTasks):
-    """Generate a portfolio based on job description and resume"""
+    """Generate a portfolio based on job description and resume or chat session"""
     try:
-        # Get job description and resume
-        jd_result = supabase.table("job_descriptions").select("*").eq("id", request.job_description_id).single().execute()
-        resume_result = supabase.table("resumes").select("*").eq("id", request.resume_id).single().execute()
+        # Get job description if provided
+        job_description = None
+        if request.job_description_id:
+            jd_result = supabase.table("job_descriptions").select("*").eq("id", request.job_description_id).single().execute()
+            if not jd_result.data:
+                raise HTTPException(status_code=404, detail="Job description not found")
+            job_description = jd_result.data
         
-        if not jd_result.data or not resume_result.data:
-            raise HTTPException(status_code=404, detail="Job description or resume not found")
+        # Get resume or chat session based on what's provided
+        resume_content = None
+        if request.resume_id:
+            resume_result = supabase.table("resumes").select("*").eq("id", request.resume_id).single().execute()
+            if not resume_result.data:
+                raise HTTPException(status_code=404, detail="Resume not found")
+            resume_content = resume_result.data["content"]
+        elif request.chat_session_id:
+            chat_result = supabase.table("chat_messages").select("*").eq("chat_session_id", request.chat_session_id).order("created_at").execute()
+            if not chat_result.data:
+                raise HTTPException(status_code=404, detail="Chat session not found")
+            # Get the last message which should contain the structured data
+            last_message = chat_result.data[-1]
+            try:
+                resume_content = json.loads(last_message["content"])
+            except json.JSONDecodeError:
+                raise HTTPException(status_code=400, detail="Invalid chat session data")
+        else:
+            raise HTTPException(status_code=400, detail="Either resume_id or chat_session_id must be provided")
         
         # Create portfolio record
         portfolio = Portfolio(
             user_id=request.user_id,
             job_description_id=request.job_description_id,
             resume_id=request.resume_id,
+            chat_session_id=request.chat_session_id,
             title=request.title,
-            method=PortfolioMethod.RESUME,
+            method=PortfolioMethod.RESUME if request.resume_id else PortfolioMethod.CHAT,
             status=PortfolioStatus.PROCESSING
         )
         portfolio_data = convert_datetimes_to_iso(portfolio.model_dump())
@@ -1439,7 +1613,17 @@ async def generate_portfolio(request: PortfolioGenerateRequest, background_tasks
         # Process in background
         def process_portfolio_sync():
             try:
-                structured_content = llm_service.analyze_resume(resume_result.data["content"])
+                if isinstance(resume_content, dict):
+                    # If it's already structured (from chat), use it directly
+                    structured_content = resume_content
+                else:
+                    # If it's text (from resume), analyze it
+                    structured_content = llm_service.analyze_resume(resume_content)
+                
+                # If job description is provided, use it to enhance the portfolio
+                if job_description:
+                    structured_content = llm_service.enhance_portfolio_with_jd(structured_content, job_description)
+                
                 portfolio_content = llm_service.generate_portfolio_content(structured_content)
                 supabase.table("portfolios").update({
                     "status": PortfolioStatus.COMPLETED,
@@ -1459,7 +1643,7 @@ async def generate_portfolio(request: PortfolioGenerateRequest, background_tasks
         return result.data[0]
     except Exception as e:
         logger.error(f"Error generating portfolio: {str(e)}")
-        raise HTTPException(status_code=500, detail="Error generating portfolio")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/resumes/{user_id}/latest")
 async def get_latest_resume(user_id: str):

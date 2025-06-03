@@ -56,6 +56,7 @@ CREATE TABLE portfolios (
     user_id UUID NOT NULL,
     job_description_id UUID REFERENCES job_descriptions(id),
     resume_id UUID REFERENCES resumes(id),
+    chat_session_id UUID REFERENCES chat_sessions(id),
     title TEXT NOT NULL,
     method TEXT NOT NULL,
     status TEXT NOT NULL,
@@ -127,4 +128,5 @@ CREATE INDEX idx_interview_scores_user_id ON interview_scores(user_id);
 CREATE INDEX idx_interview_scores_job_description_id ON interview_scores(job_description_id);
 CREATE INDEX idx_career_guides_user_id ON career_guides(user_id);
 CREATE INDEX idx_career_guides_resume_id ON career_guides(resume_id);
-CREATE INDEX idx_career_guides_job_description_id ON career_guides(job_description_id); 
+CREATE INDEX idx_career_guides_job_description_id ON career_guides(job_description_id);
+CREATE INDEX idx_portfolios_chat_session_id ON portfolios(chat_session_id); 

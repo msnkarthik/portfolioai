@@ -16,10 +16,12 @@ import {
   Alert,
   CircularProgress,
   IconButton,
-  Tooltip
+  Tooltip,
+  Stack
 } from '@mui/material';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import DownloadIcon from '@mui/icons-material/Download';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import axios from '../utils/axios';
 
 function PortfolioGenerator({ userId }) {
@@ -28,6 +30,7 @@ function PortfolioGenerator({ userId }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const [regenerating, setRegenerating] = useState({});
 
   // Fetch portfolios on component mount or when userId changes
   useEffect(() => {
@@ -151,6 +154,60 @@ function PortfolioGenerator({ userId }) {
     }
   };
 
+  const handleRegeneratePortfolio = async (portfolio) => {
+    try {
+      // Set regenerating state for this specific portfolio
+      setRegenerating(prev => ({ ...prev, [portfolio.id]: true }));
+      
+      // Call the generate endpoint with the same parameters
+      const response = await axios.post('/api/portfolios/generate', {
+        user_id: userId,
+        title: portfolio.title || 'My Portfolio',
+        resume_id: portfolio.resume_id,
+        chat_session_id: portfolio.chat_session_id,
+        job_description_id: portfolio.job_description_id
+      });
+
+      // Show success message
+      setSnackbar({
+        open: true,
+        message: 'Portfolio regeneration started. Please wait...',
+        severity: 'success'
+      });
+
+      // Refresh the portfolios list after a short delay
+      setTimeout(() => {
+        const fetchPortfolios = async () => {
+          try {
+            const response = await axios.get(`/api/users/${userId}/portfolios`);
+            if (Array.isArray(response.data)) {
+              setPortfolios(response.data);
+              if (response.data.length > 0) {
+                const latest = response.data.reduce((latest, current) => {
+                  return new Date(current.created_at) > new Date(latest.created_at) ? current : latest;
+                });
+                setLatestPortfolio(latest);
+              }
+            }
+          } catch (error) {
+            console.error('Error fetching portfolios:', error);
+          }
+        };
+        fetchPortfolios();
+      }, 2000);
+    } catch (error) {
+      console.error('Error regenerating portfolio:', error);
+      setSnackbar({
+        open: true,
+        message: 'Error regenerating portfolio. Please try again.',
+        severity: 'error'
+      });
+    } finally {
+      // Clear regenerating state for this portfolio
+      setRegenerating(prev => ({ ...prev, [portfolio.id]: false }));
+    }
+  };
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
@@ -190,23 +247,41 @@ function PortfolioGenerator({ userId }) {
       <Card sx={{ mb: 3, borderRadius: 3, boxShadow: 3 }}>
         <CardContent sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '150px' }}>
           {latestPortfolio ? (
-            <Button
-              variant="contained"
-              color="primary"
-              size="large"
-              onClick={() => handleViewPortfolio(latestPortfolio)}
-              disabled={latestPortfolio.status !== 'completed'}
-              sx={{ 
-                px: 4, 
-                py: 2,
-                fontSize: '1.1rem',
-                textTransform: 'none'
-              }}
-            >
-              {latestPortfolio.status === 'completed' 
-                ? 'View AI Portfolio' 
-                : 'Portfolio Generation in Progress...'}
-            </Button>
+            <Stack direction="row" spacing={2}>
+              <Button
+                variant="contained"
+                color="primary"
+                size="large"
+                onClick={() => handleViewPortfolio(latestPortfolio)}
+                disabled={latestPortfolio.status !== 'completed'}
+                sx={{ 
+                  px: 4, 
+                  py: 2,
+                  fontSize: '1.1rem',
+                  textTransform: 'none'
+                }}
+              >
+                {latestPortfolio.status === 'completed' 
+                  ? 'View AI Portfolio' 
+                  : 'Portfolio Generation in Progress...'}
+              </Button>
+              <Button
+                variant="outlined"
+                color="primary"
+                size="large"
+                onClick={() => handleRegeneratePortfolio(latestPortfolio)}
+                disabled={latestPortfolio.status !== 'completed' || regenerating[latestPortfolio.id]}
+                startIcon={regenerating[latestPortfolio.id] ? <CircularProgress size={20} /> : null}
+                sx={{ 
+                  px: 4, 
+                  py: 2,
+                  fontSize: '1.1rem',
+                  textTransform: 'none'
+                }}
+              >
+                {regenerating[latestPortfolio.id] ? 'Regenerating...' : 'Regenerate'}
+              </Button>
+            </Stack>
           ) : (
             <Typography color="text.secondary" align="center">
               No portfolio available. Please generate a portfolio from the Profile tab.
@@ -240,24 +315,39 @@ function PortfolioGenerator({ userId }) {
                     <TableCell>{portfolio.title || 'Untitled Portfolio'}</TableCell>
                     <TableCell>{portfolio.status}</TableCell>
                     <TableCell>
-                      <Tooltip title="View Portfolio">
-                        <IconButton
-                          color="primary"
-                          onClick={() => handleViewPortfolio(portfolio)}
-                          disabled={portfolio.status !== 'completed'}
-                        >
-                          <VisibilityIcon />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="Export Portfolio">
-                        <IconButton
-                          color="primary"
-                          onClick={() => handleExportPortfolio(portfolio)}
-                          disabled={portfolio.status !== 'completed'}
-                        >
-                          <DownloadIcon />
-                        </IconButton>
-                      </Tooltip>
+                      <Stack direction="row" spacing={1}>
+                        <Tooltip title="View Portfolio">
+                          <IconButton
+                            color="primary"
+                            onClick={() => handleViewPortfolio(portfolio)}
+                            disabled={portfolio.status !== 'completed'}
+                          >
+                            <VisibilityIcon />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Export Portfolio">
+                          <IconButton
+                            color="primary"
+                            onClick={() => handleExportPortfolio(portfolio)}
+                            disabled={portfolio.status !== 'completed'}
+                          >
+                            <DownloadIcon />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Regenerate Portfolio">
+                          <IconButton
+                            color="primary"
+                            onClick={() => handleRegeneratePortfolio(portfolio)}
+                            disabled={portfolio.status !== 'completed' || regenerating[portfolio.id]}
+                          >
+                            {regenerating[portfolio.id] ? (
+                              <CircularProgress size={24} />
+                            ) : (
+                              <RefreshIcon />
+                            )}
+                          </IconButton>
+                        </Tooltip>
+                      </Stack>
                     </TableCell>
                   </TableRow>
                 ))}

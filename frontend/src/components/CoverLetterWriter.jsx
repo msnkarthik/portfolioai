@@ -14,10 +14,12 @@ import {
   Button,
   Snackbar,
   Alert,
-  CircularProgress
+  CircularProgress,
+  Stack
 } from '@mui/material';
 import axios from 'axios';
 import ReactMarkdown from 'react-markdown';
+import RefreshIcon from '@mui/icons-material/Refresh';
 
 function CoverLetterWriter({ userId }) {
   const [coverLetters, setCoverLetters] = useState([]);
@@ -25,6 +27,7 @@ function CoverLetterWriter({ userId }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const [regenerating, setRegenerating] = useState({});
 
   // Fetch cover letters on component mount
   useEffect(() => {
@@ -58,6 +61,40 @@ function CoverLetterWriter({ userId }) {
     setSelectedCoverLetter(coverLetter);
   };
 
+  const handleRegenerateCoverLetter = async (coverLetter) => {
+    try {
+      // Set regenerating state for this specific cover letter
+      setRegenerating(prev => ({ ...prev, [coverLetter.id]: true }));
+      
+      // Call the generate endpoint with the same parameters
+      const response = await axios.post('/api/cover-letters/generate', {
+        user_id: userId,
+        job_description_id: coverLetter.job_description_id,
+        resume_id: coverLetter.resume_id
+      });
+
+      // Show success message
+      setSnackbar({
+        open: true,
+        message: 'Cover letter regeneration started. Please wait...',
+        severity: 'success'
+      });
+
+      // Refresh the cover letters list after a short delay
+      setTimeout(fetchCoverLetters, 2000);
+    } catch (error) {
+      console.error('Error regenerating cover letter:', error);
+      setSnackbar({
+        open: true,
+        message: 'Error regenerating cover letter. Please try again.',
+        severity: 'error'
+      });
+    } finally {
+      // Clear regenerating state for this cover letter
+      setRegenerating(prev => ({ ...prev, [coverLetter.id]: false }));
+    }
+  };
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
@@ -75,14 +112,27 @@ function CoverLetterWriter({ userId }) {
             Latest Cover Letter
           </Typography>
           {selectedCoverLetter ? (
-            <Box sx={{ 
-              p: 2, 
-              bgcolor: 'background.paper', 
-              borderRadius: 1,
-              maxHeight: '500px',
-              overflow: 'auto'
-            }}>
-              <ReactMarkdown>{selectedCoverLetter.content}</ReactMarkdown>
+            <Box>
+              <Box sx={{ 
+                p: 2, 
+                bgcolor: 'background.paper', 
+                borderRadius: 1,
+                maxHeight: '500px',
+                overflow: 'auto',
+                mb: 2
+              }}>
+                <ReactMarkdown>{selectedCoverLetter.content}</ReactMarkdown>
+              </Box>
+              <Button
+                variant="outlined"
+                color="primary"
+                onClick={() => handleRegenerateCoverLetter(selectedCoverLetter)}
+                disabled={regenerating[selectedCoverLetter.id]}
+                startIcon={regenerating[selectedCoverLetter.id] ? <CircularProgress size={20} /> : <RefreshIcon />}
+                sx={{ mt: 2 }}
+              >
+                {regenerating[selectedCoverLetter.id] ? 'Regenerating...' : 'Regenerate Cover Letter'}
+              </Button>
             </Box>
           ) : (
             <Typography color="text.secondary">
@@ -117,13 +167,24 @@ function CoverLetterWriter({ userId }) {
                       {coverLetter.job_description_id ? 'Linked' : 'Not Linked'}
                     </TableCell>
                     <TableCell>
-                      <Button
-                        variant="outlined"
-                        size="small"
-                        onClick={() => handleViewCoverLetter(coverLetter)}
-                      >
-                        View
-                      </Button>
+                      <Stack direction="row" spacing={1}>
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          onClick={() => handleViewCoverLetter(coverLetter)}
+                        >
+                          View
+                        </Button>
+                        <Button
+                          variant="contained"
+                          size="small"
+                          onClick={() => handleRegenerateCoverLetter(coverLetter)}
+                          disabled={regenerating[coverLetter.id]}
+                          startIcon={regenerating[coverLetter.id] ? <CircularProgress size={16} /> : <RefreshIcon />}
+                        >
+                          {regenerating[coverLetter.id] ? 'Regenerating...' : 'Regenerate'}
+                        </Button>
+                      </Stack>
                     </TableCell>
                   </TableRow>
                 ))}
