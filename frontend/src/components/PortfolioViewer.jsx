@@ -14,16 +14,46 @@ function PortfolioViewer() {
   useEffect(() => {
     const fetchPortfolio = async () => {
       try {
-        // Backend expects portfolio at /api/portfolios/{id}
-        const res = await axios.get(`/api/portfolios/${id}`);
-        setPortfolio(res.data.html || '<p>No portfolio found.</p>');
-      } catch (err) {
-        setSnackbar({ open: true, message: 'Failed to load portfolio.', severity: 'error' });
+        console.log('Fetching portfolio:', id);
+        
+        // Use consistent endpoint format
+        const response = await axios.get(`/api/users/portfolios/${id}`);
+        
+        // Log successful response
+        console.log('Successfully fetched portfolio:', response.data);
+        
+        // Validate response data
+        if (!response.data || !response.data.content) {
+          throw new Error('Invalid portfolio data: missing content');
+        }
+        
+        setPortfolio(response.data.content);
+      } catch (error) {
+        console.error('Error fetching portfolio:', error);
+        const errorMessage = error.response?.data?.detail || 
+                           error.response?.data?.error || 
+                           error.message || 
+                           'Failed to load portfolio. Please try again.';
+        setSnackbar({ 
+          open: true, 
+          message: errorMessage, 
+          severity: 'error' 
+        });
       } finally {
         setLoading(false);
       }
     };
-    fetchPortfolio();
+    
+    if (id) {
+      fetchPortfolio();
+    } else {
+      setSnackbar({ 
+        open: true, 
+        message: 'Invalid portfolio ID', 
+        severity: 'error' 
+      });
+      setLoading(false);
+    }
   }, [id]);
 
   return (

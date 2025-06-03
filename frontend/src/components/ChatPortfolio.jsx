@@ -1,29 +1,26 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Box, Card, CardContent, Typography, TextField, Button, CircularProgress, Snackbar, Alert, List, ListItem, ListItemText, Paper } from '@mui/material';
 import ChatIcon from '@mui/icons-material/Chat';
-import axios from 'axios';
-
-// Hardcoded user_id for demo; replace with real user auth in production
-const USER_ID = "test-user-123";
 
 // ChatPortfolio component allows users to create a portfolio via chat Q&A
-function ChatPortfolio({ onPortfolioCreated }) {
-  // Start with a welcome message
+function ChatPortfolio({ onChatComplete }) {
   const [messages, setMessages] = useState([
-    { sender: 'ai', text: 'Let me help you generate your portfolio through chat. Are you ready?' },
+    { sender: 'ai', text: 'Hi! I can help you build your portfolio. What is your full name?' },
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const [currentQuestion, setCurrentQuestion] = useState(0);
   const chatEndRef = useRef(null);
-  // Store portfolio_id after chat start
-  const [portfolioId, setPortfolioId] = useState(null);
-  // Store title after first answer
-  const [title, setTitle] = useState('');
-  // Store chat completion state
-  const [chatComplete, setChatComplete] = useState(false);
-  // Track if the real chat has started
-  const [chatStarted, setChatStarted] = useState(false);
+
+  const questions = [
+    'What is your full name?',
+    'What is your most recent job title?',
+    'List your top skills.',
+    'Describe your work experience.',
+    'List your projects.',
+    'List your education qualifications'
+  ];
 
   // Scroll to bottom on new message
   useEffect(() => {
@@ -37,58 +34,94 @@ function ChatPortfolio({ onPortfolioCreated }) {
     setMessages((msgs) => [...msgs, userMsg]);
     setInput('');
     setLoading(true);
+
     try {
-      // If chat hasn't started, start it after the welcome message
-      if (!chatStarted) {
-        setChatStarted(true);
-        // After the welcome, get the first backend question
-        const res = await axios.post('/api/portfolios/chat/start', {
-          user_id: USER_ID,
-          title: input,
-        });
-        setPortfolioId(res.data.portfolio_id);
-        setTitle(input);
-        setMessages((msgs) => [...msgs, { sender: 'ai', text: res.data.next_question }]);
-        setLoading(false);
+      // Store the answer
+      const answers = messages
+        .filter(msg => msg.sender === 'user')
+        .map(msg => msg.text);
+      answers.push(input);
+
+      // If this was the last question, complete the chat
+      if (currentQuestion === questions.length - 1) {
+        // Add completion message
+        setMessages(msgs => [...msgs, { 
+          sender: 'ai', 
+          text: 'Thanks for your inputs. Saving your profile information.' 
+        }]);
+
+        // Parse the chat answers into structured data
+        const structuredData = {
+          'Name': answers[0] || '',  // Use the name from first answer
+          'About Me': answers[0] || '',
+          'Work Experience': [],
+          'Skills': [],
+          'Projects': [],
+          'Education': []
+        };
+
+        // Parse Work Experience
+        if (answers[1]) {
+          const workExp = answers[1].split(';').map(item => {
+            const parts = item.split('|').map(p => p.trim());
+            return {
+              'Company': parts[0] || '',
+              'Designation': parts[1] || '',
+              'Duration': parts[2] || '',
+              'Description': parts[3] || ''
+            };
+          });
+          structuredData['Work Experience'] = workExp;
+        }
+
+        // Parse Skills
+        if (answers[2]) {
+          structuredData['Skills'] = answers[2].split(/[,\n]/).map(s => s.trim()).filter(Boolean);
+        }
+
+        // Parse Projects
+        if (answers[3]) {
+          const projects = answers[3].split(';').map(item => {
+            const parts = item.split('|').map(p => p.trim());
+            return {
+              'Name': parts[0] || '',
+              'Description': parts[1] || ''
+            };
+          });
+          structuredData['Projects'] = projects;
+        }
+
+        // Parse Education
+        if (answers[4]) {
+          const education = answers[4].split(';').map(item => {
+            const parts = item.split('|').map(p => p.trim());
+            return {
+              'Degree': parts[0] || '',
+              'Institution': parts[1] || '',
+              'Board': parts[2] || '',
+              'Description': parts[3] || ''
+            };
+          });
+          structuredData['Education'] = education;
+        }
+
+        onChatComplete(structuredData);
         return;
       }
-      let aiReply = '';
-      let status = '';
-      if (!portfolioId) {
-        setTitle(input);
-        const res = await axios.post('/api/portfolios/chat/start', {
-          user_id: USER_ID,
-          title: input,
-        });
-        setPortfolioId(res.data.portfolio_id);
-        console.log('Chat start response:', res.data);
-        aiReply = res.data.next_question;
-        status = res.data.status;
-      } else {
-        const res = await axios.post('/api/portfolios/chat/answer', {
-          portfolio_id: portfolioId,
-          answer: input,
-        });
-        console.log('Chat answer response:', res.data);
-        aiReply = res.data.next_question;
-        status = res.data.status;
-      }
-      // If no next_question or status is completed/processing, mark chat as complete
-      if (!aiReply || status === 'completed' || status === 'processing') {
-        setChatComplete(true);
-        setMessages((msgs) => [
-          ...msgs,
-          { sender: 'ai', text: 'Portfolio creation is in progress! You can view it in the Portfolio List.' },
-        ]);
-        setSnackbar({ open: true, message: 'Portfolio creation started! Check the Portfolio List.', severity: 'success' });
-        // Notify parent to refresh portfolio list
-        if (onPortfolioCreated) onPortfolioCreated();
-      } else {
-        setMessages((msgs) => [...msgs, { sender: 'ai', text: aiReply }]);
-      }
-    } catch (err) {
-      console.error('Chat error:', err);
-      setSnackbar({ open: true, message: err?.response?.data?.detail || 'Error communicating with AI.', severity: 'error' });
+
+      // Move to next question
+      setCurrentQuestion(prev => prev + 1);
+      setMessages(msgs => [...msgs, { 
+        sender: 'ai', 
+        text: questions[currentQuestion + 1] 
+      }]);
+    } catch (error) {
+      console.error('Error in chat:', error);
+      setSnackbar({
+        open: true,
+        message: 'Error processing your response. Please try again.',
+        severity: 'error'
+      });
     } finally {
       setLoading(false);
     }
@@ -103,16 +136,16 @@ function ChatPortfolio({ onPortfolioCreated }) {
   };
 
   return (
-    <Box maxWidth={600} mx="auto" mt={4}>
+    <Box>
       <Card sx={{ p: 2, borderRadius: 3, boxShadow: 3 }}>
         <CardContent>
-          <Typography variant="h5" gutterBottom>
-            Chat to Build Portfolio
+          <Typography variant="body2" color="text.secondary" mb={2}>
+            Answer a few questions to help us understand your background and skills.
           </Typography>
           <Paper variant="outlined" sx={{ maxHeight: 300, overflowY: 'auto', mb: 2, p: 1, bgcolor: 'background.paper' }}>
             <List>
               {messages.map((msg, idx) => (
-                <ListItem key={idx} alignItems={msg.sender === 'ai' ? 'flex-start' : 'flex-start'}>
+                <ListItem key={idx} alignItems={msg.sender === 'user' ? 'right' : 'left'}>
                   <ListItemText
                     primary={msg.text}
                     primaryTypographyProps={{
@@ -133,7 +166,7 @@ function ChatPortfolio({ onPortfolioCreated }) {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              disabled={loading || chatComplete}
+              disabled={loading || currentQuestion === questions.length}
               size="small"
             />
             <Button
@@ -141,14 +174,19 @@ function ChatPortfolio({ onPortfolioCreated }) {
               color="primary"
               endIcon={loading ? <CircularProgress size={18} /> : <ChatIcon />}
               onClick={handleSend}
-              disabled={loading || !input.trim() || chatComplete}
+              disabled={loading || !input.trim() || currentQuestion === questions.length}
             >
               Send
             </Button>
           </Box>
         </CardContent>
       </Card>
-      <Snackbar open={snackbar.open} autoHideDuration={4000} onClose={() => setSnackbar({ ...snackbar, open: false })}>
+      <Snackbar 
+        open={snackbar.open} 
+        autoHideDuration={4000} 
+        onClose={() => setSnackbar({ ...snackbar, open: false })}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
         <Alert severity={snackbar.severity} sx={{ width: '100%' }}>{snackbar.message}</Alert>
       </Snackbar>
     </Box>
