@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}'s Portfolio</title>
+    <style>
+        body { font-family: 'Segoe UI', Arial, sans-serif; background: #f4f6f8; margin: 0; padding: 0; color: #232323; }
+        header { background: #1db954; color: #fff; padding: 2em 0; text-align: center; border-radius: 0 0 16px 16px; }
+        header h1 { color: #fff; }
+        main { max-width: 900px; margin: 2em auto; background: #fff; border-radius: 16px; box-shadow: 0 2px 16px rgba(0,0,0,0.08); padding: 2.5em; }
+        section { margin-bottom: 2.5em; }
+        h1, h2 { color: #1db954; margin-bottom: 0.5em; }
+        h1 { font-size: 2.2em; }
+        h2 { font-size: 1.5em; }
+        .skills-list { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 0.5em; }
+        .skill-tag { background: #1db954; color: #fff; padding: 0.5em 1.2em; border-radius: 20px; font-size: 1em; font-weight: 500; letter-spacing: 0.02em; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+        .card-list { display: flex; flex-wrap: wrap; gap: 1.5em; }
+        .card { background: #f7f7f7; border-radius: 10px; box-shadow: 0 1px 6px rgba(0,0,0,0.08); padding: 1.2em 1.5em; min-width: 240px; flex: 1; margin-bottom: 1em; color: #232323; }
+        .card strong { color: #1db954; font-size: 1.1em; }
+        .card p { margin: 0.5em 0 0 0; color: #232323 !important; }
+        /* Force all section text to be dark, even if LLM returns inline styles */
+        section, section p, section span, section div { color: #232323 !important; }
+        footer { background: #232323; color: #fff; text-align: center; padding: 1.2em 0; margin-top: 2em; border-radius: 0 0 16px 16px; font-size: 1em; }
+        @media (max-width: 700px) {
+            main { padding: 1em; }
+            .card-list { flex-direction: column; gap: 1em; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>{{ title }}'s Portfolio</h1>
+    </header>
+    <main>
+        <section id="about">
+            <h2>About Me</h2>
+            <p>{{ about_me|safe }}</p>
+        </section>
+        <section id="skills">
+            <h2>Skills</h2>
+            <div class="skills-list">
+                {# Each skill is a single tag #}
+                {% for skill in skills %}
+                    <span class="skill-tag">{{ skill }}</span>
+                {% endfor %}
+            </div>
+            {% if skills_description %}<p style="margin-top:1em; color:#555;">{{ skills_description|safe }}</p>{% endif %}
+        </section>
+        <section id="experience">
+            <h2>Work Experience</h2>
+            <div class="card-list">
+                {% for exp in work_experience %}
+                    <div class="card">
+                        <strong>{{ exp.Designation }}</strong><br>
+                        <span>{{ exp.Company }}</span><br>
+                        <span>{{ exp.Duration }}</span>
+                        {% if exp.Description %}<p>{{ exp.Description|safe }}</p>{% endif %}
+                    </div>
+                {% endfor %}
+            </div>
+        </section>
+        <section id="projects">
+            <h2>Projects</h2>
+            <div class="card-list">
+                {% for proj in projects %}
+                    <div class="card">
+                        <strong>{{ proj.Name }}</strong><br>
+                        {% if proj.Description %}<p>{{ proj.Description|safe }}</p>{% endif %}
+                    </div>
+                {% else %}
+                    <p>No projects to showcase yet.</p>
+                {% endfor %}
+            </div>
+        </section>
+        <section id="education">
+            <h2>Education</h2>
+            <div class="card-list">
+                {% for edu in education %}
+                    <div class="card">
+                        <strong>{{ edu.Degree }}</strong><br>
+                        <span>{{ edu.Institution }}</span><br>
+                        {% if edu.Board %}<span>{{ edu.Board }}</span><br>{% endif %}
+                        {% if edu.Description %}<p>{{ edu.Description|safe }}</p>{% endif %}
+                    </div>
+                {% endfor %}
+            </div>
+        </section>
+    </main>
+    <footer>
+        <p>&copy; {{ year }} {{ title }}'s Portfolio</p>
+    </footer>
+</body>
+</html> 
