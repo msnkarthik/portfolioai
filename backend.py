@@ -802,8 +802,16 @@ file_service = FileProcessingService()
 async def migrate_database():
     """Run database migrations"""
     try:
-        # Add chat_session_id column to portfolios table if it doesn't exist
-        result = supabase.rpc('add_chat_session_id_column').execute()
+        # Read and execute the migrations SQL file
+        with open('migrations.sql', 'r') as f:
+            sql = f.read()
+            # Split the SQL file into individual statements
+            statements = sql.split(';')
+            for statement in statements:
+                if statement.strip():
+                    # Execute each statement
+                    result = supabase.table('_migrations').rpc('exec_sql', {'sql': statement}).execute()
+                    logger.info(f"Executed migration statement: {statement[:100]}...")
         logger.info("Database migration completed successfully")
     except Exception as e:
         logger.error(f"Error running database migration: {str(e)}")
@@ -813,7 +821,12 @@ async def migrate_database():
 @app.on_event("startup")
 async def startup_event():
     """Run startup tasks"""
-    await migrate_database()
+    # Skip migrations in production (HF Space) environment
+    if os.getenv("ENVIRONMENT") != "production":
+        logger.info("Running database migrations in development environment")
+        await migrate_database()
+    else:
+        logger.info("Skipping database migrations in production environment")
 
 # API Routes
 @app.post("/api/portfolios/resume", response_model=Dict[str, str])

@@ -57,6 +57,7 @@ EXPOSE 7860
 ENV PYTHONUNBUFFERED=1
 ENV PORT=7860
 ENV HOST=0.0.0.0
+ENV ENVIRONMENT=production
 
 # Add healthcheck
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
