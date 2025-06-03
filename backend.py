@@ -1126,13 +1126,11 @@ async def get_portfolio(portfolio_id: str):
         logger.error(f"Error fetching portfolio: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/users/{user_id}/portfolios", response_model=List[Portfolio])
+@app.get("/api/portfolios/user/{user_id}", response_model=List[Portfolio])
 async def get_user_portfolios(user_id: str):
-    """
-    Get all portfolios for a user
-    """
+    """Get all portfolios for a user"""
     try:
-        result = supabase.table("portfolios").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
+        result = supabase.table("portfolios").select("*").eq("user_id", user_id).execute()
         return result.data
     except Exception as e:
         logger.error(f"Error fetching user portfolios: {str(e)}")

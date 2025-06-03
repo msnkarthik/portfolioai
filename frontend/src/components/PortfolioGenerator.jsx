@@ -47,7 +47,7 @@ function PortfolioGenerator({ userId }) {
         setError(null);
         console.log('Fetching portfolios for user:', userId);
         
-        const response = await axios.get(`/api/users/${userId}/portfolios`);
+        const response = await axios.get(`/api/portfolios/user/${userId}`);
         console.log('Successfully fetched portfolios:', response.data);
         
         if (!Array.isArray(response.data)) {
@@ -179,7 +179,7 @@ function PortfolioGenerator({ userId }) {
       setTimeout(() => {
         const fetchPortfolios = async () => {
           try {
-            const response = await axios.get(`/api/users/${userId}/portfolios`);
+            const response = await axios.get(`/api/portfolios/user/${userId}`);
             if (Array.isArray(response.data)) {
               setPortfolios(response.data);
               if (response.data.length > 0) {

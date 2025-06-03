@@ -17,7 +17,7 @@ function PortfolioViewer() {
         console.log('Fetching portfolio:', id);
         
         // Use consistent endpoint format
-        const response = await axios.get(`/api/users/portfolios/${id}`);
+        const response = await axios.get(`/api/portfolios/${id}`);
         
         // Log successful response
         console.log('Successfully fetched portfolio:', response.data);
