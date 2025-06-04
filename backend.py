@@ -46,6 +46,21 @@ logger = logging.getLogger(__name__)
 # Load environment variables from .env if present
 load_dotenv()
 
+# Initialize Supabase client
+try:
+    supabase_url = get_supabase_url()
+    supabase_key = get_supabase_key()
+    if not supabase_url or not supabase_key:
+        raise ValueError("Missing Supabase credentials")
+    supabase = create_client(supabase_url, supabase_key)
+    logger.info("Supabase client initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize Supabase client: {str(e)}")
+    raise
+
+# Initialize in-memory stores
+chat_sessions_store = {}
+
 # ===== MODEL DEFINITIONS START =====
 class PortfolioMethod(str, Enum):
     RESUME = "resume"
@@ -221,8 +236,33 @@ def convert_datetimes_to_iso(data: dict) -> dict:
 # Initialize FastAPI app
 app = FastAPI()
 
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, replace with specific origins
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # ===== API ROUTES START =====
 # All API routes must be defined BEFORE mounting static files
+
+@app.get("/api/test/db")
+async def test_db():
+    """Test endpoint to verify database connectivity"""
+    try:
+        # Try to query a simple table
+        result = supabase.table("job_descriptions").select("count").limit(1).execute()
+        logger.info("Database connection test successful")
+        return {
+            "status": "ok",
+            "message": "Database connection successful",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Database connection test failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database connection failed: {str(e)}")
 
 @app.get("/api/test")
 async def test_api():
@@ -918,8 +958,9 @@ async def list_interview_scores(user_id: str):
         # Fetch scores directly from interview_scores table
         result = supabase.table("interview_scores").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
         
+        # Return empty list if no scores found (this is a valid state)
         if not result.data:
-            logger.info("No scores found in database")
+            logger.info("No interview scores found for user")
             return []
             
         logger.info(f"Found {len(result.data)} interview scores")
@@ -930,7 +971,8 @@ async def list_interview_scores(user_id: str):
         logger.error(f"Error listing interview scores: {str(e)}")
         logger.error(f"Full error details: {type(e).__name__}: {str(e)}")
         logger.error(f"Stack trace:", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error listing interview scores: {str(e)}")
+        # Return empty list instead of error for better UX
+        return []
 
 # Career Guide Endpoints
 @app.post("/api/career-guides/generate", response_model=CareerGuide)
