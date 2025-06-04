@@ -86,6 +86,10 @@ except Exception as e:
     logger.error(f"Failed to initialize Groq client: {str(e)}")
     raise
 
+# Initialize Jinja2 environment
+template_env = Environment(loader=FileSystemLoader('.'))
+portfolio_template = template_env.get_template('portfolio_template.html')
+
 # ===== MODEL DEFINITIONS START =====
 class PortfolioMethod(str, Enum):
     RESUME = "resume"
@@ -264,6 +268,15 @@ class LLMService:
             logger.error(f"Error calling LLM: {str(e)}")
             raise HTTPException(status_code=500, detail="Error calling LLM service")
     
+    def _clean_html_content(self, content: str) -> str:
+        """Clean up HTML content from LLM response"""
+        # Remove markdown code block markers
+        content = re.sub(r'```html\s*', '', content)
+        content = re.sub(r'```\s*$', '', content)
+        # Remove any "Here is the HTML content:" type prefixes
+        content = re.sub(r'^.*?(?=<)', '', content, flags=re.DOTALL)
+        return content.strip()
+
     def analyze_resume(self, resume_text: str) -> dict:
         """Analyze resume text and structure it into portfolio sections"""
         try:
@@ -296,27 +309,30 @@ class LLMService:
     def generate_portfolio_content(self, structured_data: dict) -> dict:
         """Generate HTML and CSS for portfolio from structured data"""
         try:
-            # Generate HTML content
-            html_prompt = (
-                "Generate a modern, responsive HTML portfolio template based on this structured data. "
-                "Use semantic HTML5 elements and modern CSS classes. "
-                "Include sections for: About Me, Skills, Work Experience, Projects, Education. "
-                "Do NOT include any JavaScript. "
-                "Return ONLY the HTML content.\n\n"
-                f"Data: {json.dumps(structured_data, indent=2)}"
+            # Generate HTML content using our template
+            html_content = portfolio_template.render(
+                title=structured_data.get("Name", "Portfolio"),
+                about_me=structured_data.get("About Me", ""),
+                skills=structured_data.get("Skills", []),
+                work_experience=structured_data.get("Work Experience", []),
+                projects=structured_data.get("Projects", []),
+                education=structured_data.get("Education", [])
             )
-            html_content = self._call_llm(html_prompt)
 
             # Generate CSS content
             css_prompt = (
-                "Generate modern, responsive CSS for the portfolio template. "
+                "Generate modern, responsive CSS for a portfolio template. "
                 "Use CSS Grid and Flexbox for layout. "
                 "Include a clean, professional color scheme. "
                 "Make it mobile-responsive. "
                 "Do NOT include any JavaScript. "
-                "Return ONLY the CSS content."
+                "Do NOT include any markdown formatting or code block markers. "
+                "Return ONLY the raw CSS content.\n\n"
+                "The HTML structure uses these classes: "
+                "header, main, section, h1, h2, .skills-list, .skill-tag, "
+                ".card-list, .card, footer"
             )
-            css_content = self._call_llm(css_prompt)
+            css_content = self._clean_html_content(self._call_llm(css_prompt))
 
             return {
                 "html": html_content,
