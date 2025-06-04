@@ -89,6 +89,503 @@ except ValueError as e:
     logger.error(f"Failed to initialize services: {str(e)}")
     raise
 
+# ===== SERVICE CLASSES START =====
+class LLMService:
+    """Handles all LLM interactions using Groq"""
+    
+    def __init__(self):
+        self.model = "meta-llama/llama-4-scout-17b-16e-instruct"
+    
+    def analyze_resume(self, resume_text: str) -> dict:
+        """Analyze resume text and structure it into portfolio sections"""
+        try:
+            prompt = (
+                "Analyze the following resume and structure it into a professional portfolio. "
+                "Return ONLY a valid JSON object with these sections: About Me, Skills, Work Experience, Projects, Education. "
+                "Do NOT include any markdown, explanation, or code blocks. "
+                "Example: {\"About Me\": ..., \"Skills\": ..., ...}\n\n"
+                f"Resume text:\n{resume_text}"
+            )
+            logger.info(f"Calling LLM analyze_resume with prompt: {prompt[:200]}...")
+            response = groq_client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7,
+                max_tokens=2000
+            )
+            raw = response.choices[0].message.content
+            logger.info(f"LLM analyze_resume raw response: {raw}")
+            try:
+                return json.loads(raw)
+            except Exception:
+                # Fallback: extract JSON from code block
+                match = re.search(r'\{[\s\S]*\}', raw)
+                if match:
+                    try:
+                        return json.loads(match.group(0))
+                    except Exception as e2:
+                        logger.error(f"Error parsing extracted JSON: {str(e2)}")
+                logger.error(f"Error parsing LLM analyze_resume response as JSON: {raw}")
+                raise HTTPException(status_code=500, detail="LLM did not return valid JSON")
+        except Exception as e:
+            logger.error(f"Error in resume analysis: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error analyzing resume")
+
+    def generate_about_me(self, structured_data):
+        # Use all available information to generate a personalized About Me
+        prompt = (
+            "Write a detailed, engaging About Me section for a portfolio website, based on the following information about the person: "
+            f"{structured_data}\n"
+            "Do NOT include any introductory or instructional text. "
+            "Do NOT include Markdown, asterisks, or bold/italic formatting. "
+            "Return only the content to be displayed, as plain text or simple HTML paragraphs."
+        )
+        return self._call_llm(prompt)
+
+    def generate_skills(self, skills_list):
+        # Prompt for a summary/gist about the person's skills, not a list
+        prompt = (
+            "Given this list of skills, write a short, human-like summary (1-2 sentences) describing the person's skills for a portfolio website. "
+            f"Skills: {skills_list}\n"
+            "Do NOT include any introductory or instructional text. "
+            "Do NOT include Markdown, asterisks, or bold/italic formatting. "
+            "Do NOT return a list or bullet points. Do NOT repeat the skill names. "
+            "Return only a plain text summary."
+        )
+        return self._call_llm(prompt)
+
+    def generate_work_experience(self, work_experience_list):
+        prompt = (
+            "Given this work experience data, write a detailed, human-like description for each job for a portfolio website. "
+            f"Work Experience: {work_experience_list}\n"
+            "Do NOT include any introductory or instructional text. "
+            "Do NOT include Markdown, asterisks, or bold/italic formatting. "
+            "Return only the content to be displayed, as plain text or simple HTML paragraphs."
+        )
+        return self._call_llm(prompt)
+
+    def generate_projects(self, projects_list):
+        prompt = (
+            "Given this list of projects, write a short, human-like description for each project for a portfolio website. "
+            f"Projects: {projects_list}\n"
+            "Do NOT include any introductory or instructional text. "
+            "Do NOT include Markdown, asterisks, or bold/italic formatting. "
+            "Return only the content to be displayed, as plain text or simple HTML paragraphs."
+        )
+        return self._call_llm(prompt)
+
+    def generate_education(self, education_list):
+        prompt = (
+            "Given this education data, write a detailed, human-like description for each degree for a portfolio website. "
+            f"Education: {education_list}\n"
+            "Do NOT include any introductory or instructional text. "
+            "Do NOT include Markdown, asterisks, or bold/italic formatting. "
+            "Return only the content to be displayed, as plain text or simple HTML paragraphs."
+        )
+        return self._call_llm(prompt)
+
+    def _call_llm(self, prompt):
+        response = groq_client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+            max_tokens=1000
+        )
+        raw = response.choices[0].message.content.strip()
+        # Remove code block wrappers if present
+        if raw.startswith('```'):
+            raw = raw.lstrip('`')
+            if raw.lower().startswith('json'):
+                raw = raw[4:]
+            raw = raw.strip()
+            if raw.endswith('```'):
+                raw = raw[:-3].strip()
+        return raw
+
+    def generate_portfolio_content(self, structured_data: dict) -> dict:
+        try:
+            # Generate content for each section using the LLM
+            about_me = self.generate_about_me(structured_data)
+            skills = structured_data.get('Skills', [])
+            skills_description = self.generate_skills(skills) if skills else ''
+            work_experience = structured_data.get('Work Experience', [])
+            projects = structured_data.get('Projects', [])
+            education = structured_data.get('Education', [])
+            # Determine the portfolio title (user's name)
+            name = structured_data.get('Name')
+            if not name:
+                # Try to extract name from About Me (first sentence or first two words)
+                about = structured_data.get('About Me', '')
+                if about:
+                    # Try to extract a name-like phrase from the start
+                    match = re.match(r"[Hh]i[,.! ]*([A-Za-z ]+)[,.! ]*", about)
+                    if match:
+                        name = match.group(1).strip()
+                    else:
+                        # Fallback: use first two words
+                        name = ' '.join(about.split()[:2])
+                else:
+                    name = 'Portfolio'
+            # Render the HTML template with generated content
+            context = {
+                'title': name,
+                'about_me': about_me,
+                'skills': skills,
+                'skills_description': skills_description,
+                'work_experience': work_experience,
+                'projects': projects,
+                'education': education,
+                'year': datetime.now().year
+            }
+            html = render_portfolio_html('portfolio_template.html', context)
+            return {'html': html, 'css': ''}
+        except Exception as e:
+            logger.error(f"Error generating portfolio content: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error generating portfolio content")
+
+    def analyze_job_description(self, job_description: str) -> dict:
+        """Analyze job description to extract key requirements and skills"""
+        prompt = (
+            "Analyze the following job description and extract key information. "
+            "Return ONLY a valid JSON object with these sections: "
+            "Required Skills, Preferred Skills, Experience Level, Key Responsibilities, "
+            "Technical Requirements, Soft Skills. "
+            "Do NOT include any markdown, explanation, or code blocks. "
+            "Return ONLY a valid JSON object. Do NOT include any text before or after the JSON. "
+            "If you cannot answer, return an empty JSON object: {}.\n\n"
+            f"Job Description:\n{job_description}"
+        )
+        for attempt in range(2):  # Try twice
+            logger.info(f"Calling LLM analyze_job_description with prompt: {prompt[:200]}...")
+            response = groq_client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7,
+                max_tokens=2000
+            )
+            raw = response.choices[0].message.content
+            logger.info(f"LLM analyze_job_description raw response: {raw}")
+            if not raw or not raw.strip():
+                logger.error(f"LLM analyze_job_description returned empty response. Prompt: {prompt}")
+                continue
+            # If the raw response is wrapped in a code block (e.g. "```{…}```"), strip it.
+            if raw.startswith("```") and raw.endswith("```"):
+                 raw = re.sub(r'```(?:json)?\s*(\{[\s\S]*\})\s*```', r'\1', raw)
+            try:
+                return json.loads(raw)
+            except Exception:
+                # Fallback extraction (using regex) for key sections if JSON parsing fails
+                fallback = {}
+                for key in ["Required Skills", "Preferred Skills", "Experience Level", "Key Responsibilities", "Technical Requirements", "Soft Skills"]:
+                     m = re.search(rf"{key}:\s*([^\n]+(?:\n[^\n]+)*)", raw, re.IGNORECASE)
+                     if m:
+                         fallback[key] = m.group(1).strip()
+                if fallback:
+                     logger.info("Fallback extraction (using regex) returned: " + str(fallback))
+                     return fallback
+                # If fallback extraction also fails, log a warning and return a minimal default JSON
+                logger.warning("Fallback extraction (using regex) did not yield a match. Returning minimal default JSON.")
+                return {"Required Skills": "Fallback Required Skills", "Experience Level": "mid-level", "Key Responsibilities": "Fallback Key Responsibilities", "Soft Skills": "Fallback Soft Skills"}
+        raise HTTPException(status_code=500, detail="LLM did not return valid JSON for job description analysis")
+
+    def optimize_resume(self, resume: str, job_analysis: dict) -> str:
+        """Optimize resume based on job description analysis"""
+        try:
+            prompt = (
+                "Optimize the following resume to better match the job requirements. "
+                "Keep all factual information but enhance the descriptions to better highlight relevant skills and experiences. "
+                "Focus on matching the key requirements while maintaining truthfulness. "
+                "Do NOT include any introductory or instructional text. "
+                "Return the optimized resume in the same format as the input.\n\n"
+                f"Job Requirements:\n{json.dumps(job_analysis, indent=2)}\n\n"
+                f"Original Resume:\n{resume}"
+            )
+            logger.info("Calling LLM optimize_resume...")
+            return self._call_llm(prompt)
+        except Exception as e:
+            logger.error(f"Error in resume optimization: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error optimizing resume")
+
+    def generate_cover_letter(self, job_description: str, optimized_resume: str) -> str:
+        """Generate a cover letter based on job description and optimized resume"""
+        try:
+            prompt = (
+                "Write a professional cover letter based on the following job description and resume. "
+                "The cover letter should be personalized, highlight relevant experience, "
+                "and demonstrate enthusiasm for the role. "
+                "Keep it concise (max 3 paragraphs) and professional. "
+                "Do NOT include any introductory or instructional text. "
+                "Return only the cover letter content.\n\n"
+                f"Job Description:\n{job_description}\n\n"
+                f"Resume:\n{optimized_resume}"
+            )
+            logger.info("Calling LLM generate_cover_letter...")
+            return self._call_llm(prompt)
+        except Exception as e:
+            logger.error(f"Error in cover letter generation: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error generating cover letter")
+
+    def generate_career_guide(self, job_description: str, optimized_resume: str) -> str:
+        """Generate career guidance based on job description and resume"""
+        try:
+            prompt = (
+                "Analyze the following job description and resume to provide career guidance. "
+                "Include: 1) Skills gap analysis, 2) Recommended learning paths, "
+                "3) Short-term and long-term career goals, 4) Action items for improvement. "
+                "Format the response in clear sections with bullet points where appropriate. "
+                "Do NOT include any introductory or instructional text. "
+                "Return only the career guidance content.\n\n"
+                f"Job Description:\n{job_description}\n\n"
+                f"Resume:\n{optimized_resume}"
+            )
+            logger.info("Calling LLM generate_career_guide...")
+            return self._call_llm(prompt)
+        except Exception as e:
+            logger.error(f"Error in career guide generation: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error generating career guide")
+
+    def generate_interview_questions(self, job_description: str, experience_level: str) -> List[str]:
+        """Generate technical interview questions based on job description"""
+        try:
+            prompt = (
+                "Generate 10 technical interview questions for a job with the following job description. "
+                "Questions should be specific, technical, and relevant to the role. "
+                "Return ONLY a JSON array of questions.\n\n"
+                f"Job Description:\n{job_description}"
+            )
+            logger.info("Calling LLM generate_interview_questions_from_jd...")
+            response = groq_client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7,
+                max_tokens=1000
+            )
+            raw = response.choices[0].message.content
+            if raw.startswith("```") and raw.endswith("```"):
+                 raw = re.sub(r'```(?:json)?\s*(\[[\s\S]*\])\s*```', r'\1', raw)
+            try:
+                 questions = json.loads(raw)
+                 if not isinstance(questions, list) or len(questions) != 10:
+                     raise ValueError("LLM did not return 10 questions")
+                 return questions
+            except Exception as e:
+                 logger.error(f"Error parsing LLM generate_interview_questions_from_jd response: {str(e)}")
+                 raise HTTPException(status_code=500, detail="Error generating interview questions")
+        except Exception as e:
+             logger.error(f"Error generating interview questions: {str(e)}")
+             raise HTTPException(status_code=500, detail="Error generating interview questions")
+
+    def score_interview(self, questions: List[InterviewQuestion]) -> int:
+        """Score the interview based on questions and answers"""
+        try:
+            # Prepare the interview data for scoring
+            interview_data = [
+                {"question": q.question, "answer": q.answer}
+                for q in questions
+            ]
+            
+            prompt = (
+                "Score this technical interview based on the questions and answers provided. "
+                "Consider: 1) Technical accuracy (60%), 2) Clarity of explanation (20%), "
+                "3) Problem-solving approach (20%). "
+                "Return a JSON object in this exact format: {\"score\": number, \"feedback\": \"string\"}. "
+                "The score should be a number between 0 and 100. "
+                "Do not include any other text or formatting. "
+                "Example response: {\"score\": 85, \"feedback\": \"Good technical knowledge\"}\n\n"
+                f"Interview Data:\n{json.dumps(interview_data, indent=2)}"
+            )
+            
+            logger.info("Calling LLM score_interview...")
+            response = groq_client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7,
+                max_tokens=500
+            )
+            
+            raw = response.choices[0].message.content.strip()
+            logger.info(f"LLM score_interview raw response: {raw}")
+            
+            # Handle potential code block formatting
+            if raw.startswith("```") and raw.endswith("```"):
+                raw = re.sub(r'```(?:json)?\s*(\{[\s\S]*\})\s*```', r'\1', raw)
+            
+            try:
+                result = json.loads(raw)
+            except json.JSONDecodeError:
+                # Try to extract JSON using regex if direct parsing fails
+                match = re.search(r'\{[\s\S]*\}', raw)
+                if match:
+                    try:
+                        result = json.loads(match.group(0))
+                    except json.JSONDecodeError as e2:
+                        logger.error(f"Error parsing extracted JSON: {str(e2)}")
+                        raise ValueError("Could not parse LLM response as JSON")
+                else:
+                    logger.error(f"No JSON object found in response: {raw}")
+                    raise ValueError("No valid JSON found in LLM response")
+            
+            if not isinstance(result, dict):
+                logger.error(f"LLM response is not a dictionary: {result}")
+                raise ValueError("LLM response is not a dictionary")
+                
+            if 'score' not in result:
+                logger.error(f"No score found in LLM response: {result}")
+                raise ValueError("No score found in LLM response")
+                
+            score = result['score']
+            if not isinstance(score, (int, float)) or score < 0 or score > 100:
+                logger.error(f"Invalid score value: {score}")
+                raise ValueError("Invalid score value")
+                
+            return int(score)
+            
+        except Exception as e:
+            logger.error(f"Error scoring interview: {str(e)}")
+            logger.error(f"Full error details: {type(e).__name__}: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error scoring interview: {str(e)}")
+
+    def generate_interview_feedback(self, questions: List[InterviewQuestion], score: int) -> str:
+        """Generate detailed feedback for the interview based on questions, answers, and score"""
+        try:
+            # Prepare the interview data for feedback
+            interview_data = [
+                {"question": q.question, "answer": q.answer}
+                for q in questions
+            ]
+            
+            prompt = (
+                "Generate detailed feedback for this technical interview based on the questions, answers, and score. "
+                "Include: 1) Overall performance assessment, 2) Key strengths demonstrated, "
+                "3) Areas for improvement, 4) Specific suggestions for each area of improvement, "
+                "5) A motivational closing message. "
+                "Keep the tone professional but encouraging. "
+                "If the score is below 70, focus more on constructive feedback and improvement areas. "
+                "If the score is 70 or above, focus more on strengths while still providing some improvement suggestions.\n\n"
+                f"Interview Score: {score}/100\n"
+                f"Interview Data:\n{json.dumps(interview_data, indent=2)}"
+            )
+            
+            logger.info("Calling LLM generate_interview_feedback...")
+            response = groq_client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7,
+                max_tokens=1000
+            )
+            
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            logger.error(f"Error generating interview feedback: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error generating interview feedback")
+
+    def enhance_portfolio_with_jd(self, structured_data: dict, job_description: dict) -> dict:
+        """Enhance portfolio content based on job description"""
+        try:
+            # Extract relevant information from job description
+            jd_content = job_description.get("content", "")
+            jd_title = job_description.get("title", "")
+            
+            # Create a prompt to enhance the portfolio
+            prompt = f"""Given the following job description and current portfolio content, enhance the portfolio to better match the job requirements:
+
+Job Title: {jd_title}
+Job Description: {jd_content}
+
+Current Portfolio Content:
+{json.dumps(structured_data, indent=2)}
+
+Please enhance the portfolio content to better align with the job requirements. Focus on:
+1. Highlighting relevant skills and experiences
+2. Adjusting the tone and focus of the about me section
+3. Emphasizing projects and work experience that match the job requirements
+4. Adding or modifying skills to match the job requirements
+
+Return the enhanced portfolio content in the same structured format."""
+
+            # Get enhanced content from LLM
+            response = groq_client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7,
+                max_tokens=2000
+            )
+            
+            # Parse the response
+            enhanced_content = response.choices[0].message.content
+            try:
+                # Try to parse as JSON
+                enhanced_data = json.loads(enhanced_content)
+                # Merge with original data, keeping original structure
+                for key in structured_data:
+                    if key in enhanced_data:
+                        structured_data[key] = enhanced_data[key]
+                return structured_data
+            except json.JSONDecodeError:
+                # If not valid JSON, return original data
+                logger.warning("Failed to parse enhanced portfolio content as JSON")
+                return structured_data
+                
+        except Exception as e:
+            logger.error(f"Error enhancing portfolio with job description: {str(e)}")
+            return structured_data  # Return original data on error
+
+class FileProcessingService:
+    """Handles file upload and processing"""
+    
+    async def process_file(self, file: UploadFile) -> str:
+        try:
+            content = await file.read()
+            if file.filename.endswith('.pdf'):
+                return await self._process_pdf(content)
+            elif file.filename.endswith('.docx'):
+                return await self._process_docx(content)
+            else:
+                raise HTTPException(status_code=400, detail="Unsupported file format")
+        except Exception as e:
+            logger.error(f"Error processing file: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error processing file")
+
+    async def process_file_bytes(self, file_bytes: bytes, filename: str) -> str:
+        try:
+            if filename.endswith('.pdf'):
+                return await self._process_pdf(file_bytes)
+            elif filename.endswith('.docx'):
+                return await self._process_docx(file_bytes)
+            else:
+                raise HTTPException(status_code=400, detail="Unsupported file format")
+        except Exception as e:
+            logger.error(f"Error processing file bytes: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error processing file bytes")
+
+    async def _process_pdf(self, content: bytes) -> str:
+        """Extract text from PDF"""
+        try:
+            pdf_file = BytesIO(content)
+            pdf_reader = PyPDF2.PdfReader(pdf_file)
+            text = ""
+            for page in pdf_reader.pages:
+                text += page.extract_text()
+            return text
+        except Exception as e:
+            logger.error(f"Error processing PDF: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error processing PDF")
+
+    async def _process_docx(self, content: bytes) -> str:
+        """Extract text from DOCX"""
+        try:
+            doc_file = BytesIO(content)
+            doc = docx.Document(doc_file)
+            text = ""
+            for paragraph in doc.paragraphs:
+                text += paragraph.text + "\n"
+            return text
+        except Exception as e:
+            logger.error(f"Error processing DOCX: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error processing DOCX")
+
+# ===== SERVICE CLASSES END =====
+
 # Initialize services
 llm_service = LLMService()
 file_service = FileProcessingService()
