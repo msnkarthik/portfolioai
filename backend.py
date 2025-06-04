@@ -1490,31 +1490,35 @@ async def get_interview_feedback(request: InterviewFeedbackRequest):
 
 # ===== API ROUTES END =====
 
-# Add catch-all route BEFORE mounting static files
-@app.get("/{full_path:path}")
-async def serve_spa(full_path: str, request: Request):
-    """Serve the frontend SPA for all non-API routes"""
-    # Skip API routes
-    if full_path.startswith("api/"):
-        raise HTTPException(status_code=404, detail="API route not found")
-    
-    # For all other routes, serve index.html
-    if frontend_path.exists():
-        try:
-            return FileResponse(frontend_path / "index.html")
-        except Exception as e:
-            logger.error(f"Error serving frontend: {str(e)}")
-            raise HTTPException(status_code=500, detail="Error serving frontend")
-    raise HTTPException(status_code=404, detail="Frontend not found")
-
-# Mount static files for frontend AFTER catch-all route
+# Mount static files for frontend BEFORE catch-all route
 frontend_path = Path(__file__).parent / "frontend" / "dist"
 if frontend_path.exists():
-    # Mount static files at root AFTER catch-all route
+    # Mount static files at root BEFORE catch-all route
+    app.mount("/assets", StaticFiles(directory=str(frontend_path / "assets"), html=False), name="assets")
     app.mount("/", StaticFiles(directory=str(frontend_path), html=True), name="static")
     logger.info(f"Frontend static files mounted at root from {frontend_path}")
 else:
     logger.warning(f"Frontend static files not found at {frontend_path}")
+
+# Add catch-all route AFTER mounting static files
+@app.get("/{full_path:path}")
+async def serve_spa(full_path: str, request: Request):
+    """Serve the frontend SPA for all non-API routes"""
+    # Skip API routes and static files
+    if full_path.startswith("api/") or full_path.startswith("assets/"):
+        raise HTTPException(status_code=404, detail="Route not found")
+    
+    # For all other routes, serve index.html
+    if frontend_path.exists():
+        try:
+            return FileResponse(
+                frontend_path / "index.html",
+                media_type="text/html"
+            )
+        except Exception as e:
+            logger.error(f"Error serving frontend: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error serving frontend")
+    raise HTTPException(status_code=404, detail="Frontend not found")
 
 if __name__ == "__main__":
     import uvicorn
