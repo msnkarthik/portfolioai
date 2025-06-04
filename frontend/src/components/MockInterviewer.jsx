@@ -147,14 +147,25 @@ function MockInterviewer({ userId }) {
       try {
         const jdResponse = await axios.get(`/api/job-descriptions/${userId}/latest`);
         if (!jdResponse.data) {
-          throw new Error('No job description found. Please add a job description first.');
+          setError('Please add a job description in the Profile tab before starting an interview.');
+          setLoading(false);
+          return;
         }
         jobDescriptionId = jdResponse.data.id;
       } catch (err) {
-        if (err.code === 'ECONNABORTED') {
-          throw new Error('Connection timed out while fetching job description. Please try again.');
+        if (err.response?.status === 404) {
+          setError('Please add a job description in the Profile tab before starting an interview.');
+          setLoading(false);
+          return;
         }
-        throw new Error('Failed to fetch job description. Please ensure you have added a job description.');
+        if (err.code === 'ECONNABORTED') {
+          setError('Connection timed out while fetching job description. Please try again.');
+          setLoading(false);
+          return;
+        }
+        setError('Failed to fetch job description. Please ensure you have added a job description.');
+        setLoading(false);
+        return;
       }
 
       // Then start the interview
@@ -165,7 +176,9 @@ function MockInterviewer({ userId }) {
         });
         
         if (!response.data) {
-          throw new Error('No interview data received from server');
+          setError('No interview data received from server. Please try again.');
+          setLoading(false);
+          return;
         }
         
         setInterview(response.data);
@@ -173,21 +186,13 @@ function MockInterviewer({ userId }) {
         setShowAllQuestions(false);
         setInterviewFeedback(null);
         setIsNewInterviewFromProfile(false);
+        setLoading(false);
       } catch (err) {
-        if (err.code === 'ECONNABORTED') {
-          throw new Error('Connection timed out while starting interview. Please try again.');
-        }
-        throw new Error(err.response?.data?.detail || 'Failed to start interview. Please try again.');
+        setError(err.response?.data?.detail || 'Failed to start interview. Please try again.');
+        setLoading(false);
       }
     } catch (err) {
-      console.error('Error starting interview:', err);
-      setError(err.message || 'Failed to start interview');
-      setSnackbar({
-        open: true,
-        message: err.message || 'Error starting interview. Please try again.',
-        severity: 'error'
-      });
-    } finally {
+      setError(err.message || 'An unexpected error occurred. Please try again.');
       setLoading(false);
     }
   };

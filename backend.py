@@ -75,6 +75,17 @@ except Exception as e:
 # Initialize in-memory stores
 chat_sessions_store = {}
 
+# Initialize Groq client
+try:
+    groq_api_key = get_groq_api_key()
+    if not groq_api_key:
+        raise ValueError("Missing Groq API key")
+    groq_client = groq.Client(api_key=groq_api_key)
+    logger.info("Groq client initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize Groq client: {str(e)}")
+    raise
+
 # ===== MODEL DEFINITIONS START =====
 class PortfolioMethod(str, Enum):
     RESUME = "resume"
@@ -522,6 +533,51 @@ Return the enhanced portfolio content in the same structured format."""
             return structured_data  # Return original data on error
 
 # ===== SERVICE CLASSES END =====
+
+class FileProcessingService:
+    """Handles file processing operations for resumes and other documents"""
+    
+    async def process_file_bytes(self, file_bytes: bytes, filename: str) -> str:
+        """
+        Process uploaded file bytes and extract text content.
+        Supports PDF and DOCX files.
+        """
+        try:
+            if filename.lower().endswith('.pdf'):
+                return await self._process_pdf(file_bytes)
+            elif filename.lower().endswith(('.doc', '.docx')):
+                return await self._process_docx(file_bytes)
+            else:
+                raise ValueError(f"Unsupported file type: {filename}")
+        except Exception as e:
+            logger.error(f"Error processing file {filename}: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
+    
+    async def _process_pdf(self, file_bytes: bytes) -> str:
+        """Extract text from PDF file bytes"""
+        try:
+            pdf_file = BytesIO(file_bytes)
+            pdf_reader = PyPDF2.PdfReader(pdf_file)
+            text = ""
+            for page in pdf_reader.pages:
+                text += page.extract_text() + "\n"
+            return text.strip()
+        except Exception as e:
+            logger.error(f"Error processing PDF: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error processing PDF file")
+    
+    async def _process_docx(self, file_bytes: bytes) -> str:
+        """Extract text from DOCX file bytes"""
+        try:
+            docx_file = BytesIO(file_bytes)
+            doc = docx.Document(docx_file)
+            text = ""
+            for paragraph in doc.paragraphs:
+                text += paragraph.text + "\n"
+            return text.strip()
+        except Exception as e:
+            logger.error(f"Error processing DOCX: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error processing DOCX file")
 
 # Initialize services
 llm_service = LLMService()
