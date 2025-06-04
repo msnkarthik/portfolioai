@@ -49,34 +49,20 @@ load_dotenv()
 # Initialize FastAPI app
 app = FastAPI(title="PortfolioAI API")
 
-# Add request logging middleware
+# Add logging middleware
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    # Log request
-    logger.info(f"Request: {request.method} {request.url.path}")
-    logger.info(f"Headers: {dict(request.headers)}")
-    
-    # Get request body if it exists
+    """Log all incoming requests for debugging"""
+    logger.info(f"Incoming request: {request.method} {request.url.path}")
     try:
-        body = await request.body()
-        if body:
-            logger.info(f"Request body: {body.decode()}")
-    except:
-        pass
-    
-    # Time the request
-    start_time = time.time()
-    
-    # Process request
-    response = await call_next(request)
-    
-    # Log response
-    process_time = time.time() - start_time
-    logger.info(f"Response: {response.status_code} (took {process_time:.2f}s)")
-    
-    return response
+        response = await call_next(request)
+        logger.info(f"Request completed: {request.method} {request.url.path} - Status: {response.status_code}")
+        return response
+    except Exception as e:
+        logger.error(f"Request failed: {request.method} {request.url.path} - Error: {str(e)}")
+        raise
 
-# Add CORS middleware with specific origins
+# Update CORS middleware with more specific configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -90,10 +76,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static files for frontend
+# Mount static files for frontend with explicit index.html handling
 frontend_path = Path(__file__).parent / "frontend" / "dist"
 if frontend_path.exists():
-    app.mount("/", StaticFiles(directory=str(frontend_path), html=True), name="frontend")
+    # Mount static files at root to serve frontend assets
+    app.mount("/", StaticFiles(directory=str(frontend_path), html=True), name="static")
+    logger.info(f"Frontend static files mounted at root from {frontend_path}")
 else:
     logger.warning(f"Frontend static files not found at {frontend_path}")
 
@@ -1690,12 +1678,25 @@ async def get_interview_feedback(request: InterviewFeedbackRequest):
         logger.error(f"Error generating interview feedback: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# Move the catch-all route here, just before the main block
+# Update the catch-all route to handle both API and frontend routes
 @app.get("/{full_path:path}")
-async def serve_spa(full_path: str):
-    """Serve the frontend SPA for all other routes"""
+async def serve_spa(full_path: str, request: Request):
+    """Serve the frontend SPA for all non-API routes"""
+    # Skip API routes
+    if full_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="API route not found")
+    
+    # Skip static files (they're handled by StaticFiles middleware)
+    if full_path.startswith("assets/") or "." in full_path.split("/")[-1]:
+        raise HTTPException(status_code=404, detail="Static file not found")
+    
+    # Serve index.html for all other routes
     if frontend_path.exists():
-        return FileResponse(frontend_path / "index.html")
+        try:
+            return FileResponse(frontend_path / "index.html")
+        except Exception as e:
+            logger.error(f"Error serving frontend: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error serving frontend")
     raise HTTPException(status_code=404, detail="Frontend not found")
 
 if __name__ == "__main__":
