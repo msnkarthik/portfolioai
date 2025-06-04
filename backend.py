@@ -1490,16 +1490,7 @@ async def get_interview_feedback(request: InterviewFeedbackRequest):
 
 # ===== API ROUTES END =====
 
-# Mount static files for frontend AFTER all API routes are defined
-frontend_path = Path(__file__).parent / "frontend" / "dist"
-if frontend_path.exists():
-    # Mount static files at root AFTER all API routes
-    app.mount("/", StaticFiles(directory=str(frontend_path), html=True), name="static")
-    logger.info(f"Frontend static files mounted at root from {frontend_path}")
-else:
-    logger.warning(f"Frontend static files not found at {frontend_path}")
-
-# Update the catch-all route to handle both API and frontend routes
+# Add catch-all route BEFORE mounting static files
 @app.get("/{full_path:path}")
 async def serve_spa(full_path: str, request: Request):
     """Serve the frontend SPA for all non-API routes"""
@@ -1507,11 +1498,7 @@ async def serve_spa(full_path: str, request: Request):
     if full_path.startswith("api/"):
         raise HTTPException(status_code=404, detail="API route not found")
     
-    # Skip static files (they're handled by StaticFiles middleware)
-    if full_path.startswith("assets/") or "." in full_path.split("/")[-1]:
-        raise HTTPException(status_code=404, detail="Static file not found")
-    
-    # Serve index.html for all other routes
+    # For all other routes, serve index.html
     if frontend_path.exists():
         try:
             return FileResponse(frontend_path / "index.html")
@@ -1519,6 +1506,15 @@ async def serve_spa(full_path: str, request: Request):
             logger.error(f"Error serving frontend: {str(e)}")
             raise HTTPException(status_code=500, detail="Error serving frontend")
     raise HTTPException(status_code=404, detail="Frontend not found")
+
+# Mount static files for frontend AFTER catch-all route
+frontend_path = Path(__file__).parent / "frontend" / "dist"
+if frontend_path.exists():
+    # Mount static files at root AFTER catch-all route
+    app.mount("/", StaticFiles(directory=str(frontend_path), html=True), name="static")
+    logger.info(f"Frontend static files mounted at root from {frontend_path}")
+else:
+    logger.warning(f"Frontend static files not found at {frontend_path}")
 
 if __name__ == "__main__":
     import uvicorn
