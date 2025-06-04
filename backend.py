@@ -46,6 +46,20 @@ logger = logging.getLogger(__name__)
 # Load environment variables from .env if present
 load_dotenv()
 
+def convert_datetimes_to_iso(data):
+    """
+    Recursively convert datetime objects in a dictionary to ISO format strings.
+    """
+    if isinstance(data, dict):
+        return {k: convert_datetimes_to_iso(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [convert_datetimes_to_iso(item) for item in data]
+    elif hasattr(data, 'isoformat'):
+        return data.isoformat()
+    return data
+
+logger.info("convert_datetimes_to_iso function loaded at module level")
+
 # Initialize Supabase client
 try:
     supabase_url = get_supabase_url()
@@ -217,21 +231,301 @@ class PortfolioGenerateRequest(BaseModel):
 
 # ===== MODEL DEFINITIONS END =====
 
-# ===== UTILITY FUNCTIONS START =====
-def convert_datetimes_to_iso(data: dict) -> dict:
-    """
-    Recursively convert datetime objects in a dictionary to ISO format strings.
-    This is needed for proper JSON serialization when storing in the database.
-    """
-    if isinstance(data, dict):
-        return {k: convert_datetimes_to_iso(v) for k, v in data.items()}
-    elif isinstance(data, list):
-        return [convert_datetimes_to_iso(item) for item in data]
-    elif isinstance(data, datetime):
-        return data.isoformat()
-    return data
+# ===== SERVICE CLASSES START =====
+class LLMService:
+    """Handles all LLM interactions using Groq"""
+    
+    def __init__(self):
+        self.model = "meta-llama/llama-4-scout-17b-16e-instruct"
+        self.client = groq_client  # Use the globally initialized groq_client
+    
+    def _call_llm(self, prompt: str, temperature: float = 0.7, max_tokens: int = 2000) -> str:
+        """Generic method to call the LLM with a prompt"""
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            logger.error(f"Error calling LLM: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error calling LLM service")
+    
+    def analyze_resume(self, resume_text: str) -> dict:
+        """Analyze resume text and structure it into portfolio sections"""
+        try:
+            prompt = (
+                "Analyze the following resume and structure it into a professional portfolio. "
+                "Return ONLY a valid JSON object with these sections: About Me, Skills, Work Experience, Projects, Education. "
+                "Do NOT include any markdown, explanation, or code blocks. "
+                "Example: {\"About Me\": ..., \"Skills\": ..., ...}\n\n"
+                f"Resume text:\n{resume_text}"
+            )
+            logger.info(f"Calling LLM analyze_resume with prompt: {prompt[:200]}...")
+            raw = self._call_llm(prompt)
+            logger.info(f"LLM analyze_resume raw response: {raw}")
+            try:
+                return json.loads(raw)
+            except Exception:
+                # Fallback: extract JSON from code block
+                match = re.search(r'\{[\s\S]*\}', raw)
+                if match:
+                    try:
+                        return json.loads(match.group(0))
+                    except Exception as e2:
+                        logger.error(f"Error parsing extracted JSON: {str(e2)}")
+                logger.error(f"Error parsing LLM analyze_resume response as JSON: {raw}")
+                raise HTTPException(status_code=500, detail="LLM did not return valid JSON")
+        except Exception as e:
+            logger.error(f"Error in resume analysis: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error analyzing resume")
 
-# ===== UTILITY FUNCTIONS END =====
+    def generate_portfolio_content(self, structured_data: dict) -> dict:
+        """Generate HTML and CSS for portfolio from structured data"""
+        try:
+            # Generate HTML content
+            html_prompt = (
+                "Generate a modern, responsive HTML portfolio template based on this structured data. "
+                "Use semantic HTML5 elements and modern CSS classes. "
+                "Include sections for: About Me, Skills, Work Experience, Projects, Education. "
+                "Do NOT include any JavaScript. "
+                "Return ONLY the HTML content.\n\n"
+                f"Data: {json.dumps(structured_data, indent=2)}"
+            )
+            html_content = self._call_llm(html_prompt)
+
+            # Generate CSS content
+            css_prompt = (
+                "Generate modern, responsive CSS for the portfolio template. "
+                "Use CSS Grid and Flexbox for layout. "
+                "Include a clean, professional color scheme. "
+                "Make it mobile-responsive. "
+                "Do NOT include any JavaScript. "
+                "Return ONLY the CSS content."
+            )
+            css_content = self._call_llm(css_prompt)
+
+            return {
+                "html": html_content,
+                "css": css_content
+            }
+        except Exception as e:
+            logger.error(f"Error generating portfolio content: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error generating portfolio content")
+
+    def generate_interview_questions(self, job_description: str, experience_level: str = "mid-level") -> List[Dict[str, str]]:
+        """Generate interview questions based on job description"""
+        try:
+            prompt = (
+                f"Generate 5 technical interview questions for a {experience_level} position based on this job description. "
+                "Questions should be specific, relevant, and test both technical knowledge and problem-solving ability. "
+                "Return ONLY a JSON array of objects with 'question' and 'expected_answer' fields. "
+                "Do NOT include any markdown, explanation, or code blocks.\n\n"
+                f"Job Description:\n{job_description}"
+            )
+            raw = self._call_llm(prompt)
+            try:
+                questions = json.loads(raw)
+                if not isinstance(questions, list):
+                    raise ValueError("LLM did not return a list of questions")
+                return questions
+            except Exception as e:
+                logger.error(f"Error parsing interview questions: {str(e)}")
+                raise HTTPException(status_code=500, detail="Error parsing interview questions")
+        except Exception as e:
+            logger.error(f"Error generating interview questions: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error generating interview questions")
+
+    def score_interview(self, questions: List[InterviewQuestion]) -> int:
+        """Score an interview based on answers to questions"""
+        try:
+            # Create a structured prompt with questions and answers
+            qa_pairs = []
+            for q in questions:
+                qa_pairs.append({
+                    "question": q.question,
+                    "answer": q.answer or "No answer provided"
+                })
+            
+            prompt = (
+                "Score this technical interview based on the quality of answers. "
+                "Consider: technical accuracy, clarity, depth of knowledge, and problem-solving approach. "
+                "Return ONLY a number between 0 and 100. "
+                "Do NOT include any explanation or additional text.\n\n"
+                f"Interview Q&A:\n{json.dumps(qa_pairs, indent=2)}"
+            )
+            
+            score_str = self._call_llm(prompt)
+            try:
+                score = int(score_str.strip())
+                if not 0 <= score <= 100:
+                    raise ValueError(f"Score {score} out of range")
+                return score
+            except ValueError as e:
+                logger.error(f"Error parsing interview score: {str(e)}")
+                raise HTTPException(status_code=500, detail="Error parsing interview score")
+        except Exception as e:
+            logger.error(f"Error scoring interview: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error scoring interview")
+
+    def generate_interview_feedback(self, questions: List[InterviewQuestion], score: int) -> str:
+        """Generate detailed feedback for an interview"""
+        try:
+            # Create a structured prompt with questions, answers, and score
+            qa_pairs = []
+            for q in questions:
+                qa_pairs.append({
+                    "question": q.question,
+                    "answer": q.answer or "No answer provided"
+                })
+            
+            prompt = (
+                "Provide detailed feedback for this technical interview. "
+                "Include: 1) Overall assessment, 2) Strengths, 3) Areas for improvement, "
+                "4) Specific feedback for each question, 5) Recommended learning resources. "
+                "Format the response in clear sections with bullet points where appropriate. "
+                "Do NOT include any markdown formatting.\n\n"
+                f"Interview Score: {score}/100\n"
+                f"Interview Q&A:\n{json.dumps(qa_pairs, indent=2)}"
+            )
+            
+            return self._call_llm(prompt)
+        except Exception as e:
+            logger.error(f"Error generating interview feedback: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error generating interview feedback")
+
+    def generate_cover_letter(self, job_description: str, resume: str) -> str:
+        """Generate a cover letter based on job description and resume"""
+        try:
+            prompt = (
+                "Write a professional cover letter based on the following job description and resume. "
+                "The cover letter should be personalized, highlight relevant experience, "
+                "and demonstrate enthusiasm for the role. "
+                "Keep it concise (max 3 paragraphs) and professional. "
+                "Do NOT include any introductory or instructional text. "
+                "Return only the cover letter content.\n\n"
+                f"Job Description:\n{job_description}\n\n"
+                f"Resume:\n{resume}"
+            )
+            return self._call_llm(prompt)
+        except Exception as e:
+            logger.error(f"Error generating cover letter: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error generating cover letter")
+
+    def generate_career_guide(self, job_description: str, resume: str) -> str:
+        """Generate career guidance based on job description and resume"""
+        try:
+            prompt = (
+                "Analyze the following job description and resume to provide career guidance. "
+                "Include: 1) Skills gap analysis, 2) Recommended learning paths, "
+                "3) Short-term and long-term career goals, 4) Action items for improvement. "
+                "Format the response in clear sections with bullet points where appropriate. "
+                "Do NOT include any introductory or instructional text. "
+                "Return only the career guidance content.\n\n"
+                f"Job Description:\n{job_description}\n\n"
+                f"Resume:\n{resume}"
+            )
+            return self._call_llm(prompt)
+        except Exception as e:
+            logger.error(f"Error generating career guide: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error generating career guide")
+
+    def analyze_job_description(self, job_description: str) -> dict:
+        """Analyze job description to extract key requirements and skills"""
+        try:
+            prompt = (
+                "Analyze the following job description and extract key information. "
+                "Return ONLY a valid JSON object with these sections: "
+                "Required Skills, Preferred Skills, Experience Level, Key Responsibilities, "
+                "Technical Requirements, Soft Skills. "
+                "Do NOT include any markdown, explanation, or code blocks. "
+                "Return ONLY a valid JSON object. Do NOT include any text before or after the JSON. "
+                "If you cannot answer, return an empty JSON object: {}.\n\n"
+                f"Job Description:\n{job_description}"
+            )
+            raw = self._call_llm(prompt)
+            try:
+                return json.loads(raw)
+            except Exception:
+                # Fallback: extract JSON from code block
+                match = re.search(r'\{[\s\S]*\}', raw)
+                if match:
+                    try:
+                        return json.loads(match.group(0))
+                    except Exception as e2:
+                        logger.error(f"Error parsing extracted JSON: {str(e2)}")
+                logger.error(f"Error parsing LLM analyze_job_description response as JSON: {raw}")
+                raise HTTPException(status_code=500, detail="LLM did not return valid JSON")
+        except Exception as e:
+            logger.error(f"Error analyzing job description: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error analyzing job description")
+
+    def optimize_resume(self, resume: str, job_analysis: dict) -> str:
+        """Optimize resume based on job description analysis"""
+        try:
+            prompt = (
+                "Optimize the following resume to better match the job requirements. "
+                "Keep all factual information but enhance the descriptions to better highlight relevant skills and experiences. "
+                "Focus on matching the key requirements while maintaining truthfulness. "
+                "Do NOT include any introductory or instructional text. "
+                "Return the optimized resume in the same format as the input.\n\n"
+                f"Job Requirements:\n{json.dumps(job_analysis, indent=2)}\n\n"
+                f"Original Resume:\n{resume}"
+            )
+            return self._call_llm(prompt)
+        except Exception as e:
+            logger.error(f"Error optimizing resume: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error optimizing resume")
+
+    def enhance_portfolio_with_jd(self, structured_data: dict, job_description: dict) -> dict:
+        """Enhance portfolio content based on job description"""
+        try:
+            # Extract relevant information from job description
+            jd_content = job_description.get("content", "")
+            jd_title = job_description.get("title", "")
+            
+            # Create a prompt to enhance the portfolio
+            prompt = f"""Given the following job description and current portfolio content, enhance the portfolio to better match the job requirements:
+
+Job Title: {jd_title}
+Job Description: {jd_content}
+
+Current Portfolio Content:
+{json.dumps(structured_data, indent=2)}
+
+Please enhance the portfolio content to better align with the job requirements. Focus on:
+1. Highlighting relevant skills and experiences
+2. Adjusting the tone and focus of the about me section
+3. Emphasizing projects and work experience that match the job requirements
+4. Adding or modifying skills to match the job requirements
+
+Return the enhanced portfolio content in the same structured format."""
+
+            # Get enhanced content from LLM
+            raw = self._call_llm(prompt)
+            try:
+                # Try to parse as JSON
+                enhanced_data = json.loads(raw)
+                # Merge with original data, keeping original structure
+                for key in structured_data:
+                    if key in enhanced_data:
+                        structured_data[key] = enhanced_data[key]
+                return structured_data
+            except json.JSONDecodeError:
+                # If not valid JSON, return original data
+                logger.warning("Failed to parse enhanced portfolio content as JSON")
+                return structured_data
+        except Exception as e:
+            logger.error(f"Error enhancing portfolio with job description: {str(e)}")
+            return structured_data  # Return original data on error
+
+# ===== SERVICE CLASSES END =====
+
+# Initialize services
+llm_service = LLMService()
+file_service = FileProcessingService()
 
 # Initialize FastAPI app
 app = FastAPI()
