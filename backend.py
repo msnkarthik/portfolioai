@@ -46,6 +46,162 @@ logger = logging.getLogger(__name__)
 # Load environment variables from .env if present
 load_dotenv()
 
+# ===== MODEL DEFINITIONS START =====
+class PortfolioMethod(str, Enum):
+    RESUME = "resume"
+    CHAT = "chat"
+
+class PortfolioStatus(str, Enum):
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    ERROR = "error"
+    IN_PROGRESS = "in_progress"
+
+class Portfolio(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    title: str
+    method: PortfolioMethod
+    status: PortfolioStatus
+    content: Optional[Dict[str, Any]] = None
+    html: Optional[str] = None
+    css: Optional[str] = None
+    resume_id: Optional[str] = None
+    job_description_id: Optional[str] = None
+    chat_session_id: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class Resume(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    content: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class OptimizedResume(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    job_description_id: str
+    original_resume_id: str
+    content: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class JobDescription(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    title: str
+    content: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class JobDescriptionCreate(BaseModel):
+    user_id: str
+    title: str
+    content: str
+
+class CoverLetter(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    job_description_id: str
+    resume_id: str
+    content: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class CoverLetterGenerateRequest(BaseModel):
+    user_id: str
+    job_description_id: str
+    resume_id: str
+
+class ResumeOptimizeRequest(BaseModel):
+    user_id: str
+    job_description_id: str
+    resume_id: str
+
+class ChatSession(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    title: str
+    current_question: Optional[str] = None
+    status: PortfolioStatus
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class ChatMessage(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    chat_session_id: str
+    content: str
+    role: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+class ChatStartRequest(BaseModel):
+    user_id: str
+    title: str
+
+class ChatMessageRequest(BaseModel):
+    chat_session_id: str
+    content: str
+
+class InterviewQuestion(BaseModel):
+    question: str
+    answer: Optional[str] = None
+
+class InterviewSession(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    job_description_id: str
+    questions: List[InterviewQuestion]
+    score: Optional[int] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class InterviewScore(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    job_description_id: str
+    job_role: str
+    score: int
+    feedback: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+class InterviewStartRequest(BaseModel):
+    user_id: str
+    job_description_id: str
+
+class InterviewAnswerRequest(BaseModel):
+    interview_id: str
+    question_index: int
+    answer: str
+
+class InterviewFeedbackRequest(BaseModel):
+    questions: List[InterviewQuestion]
+    score: int
+
+class CareerGuide(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    job_description_id: str
+    resume_id: str
+    content: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class CareerGuideGenerateRequest(BaseModel):
+    user_id: str
+    job_description_id: str
+    resume_id: str
+
+class PortfolioGenerateRequest(BaseModel):
+    user_id: str
+    title: str
+    job_description_id: Optional[str] = None
+    resume_id: Optional[str] = None
+    chat_session_id: Optional[str] = None
+
+# ===== MODEL DEFINITIONS END =====
+
 # Initialize FastAPI app
 app = FastAPI(title="PortfolioAI API")
 
